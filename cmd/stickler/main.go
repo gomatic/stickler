@@ -43,14 +43,14 @@ func run(args []string) int {
 	return 0
 }
 
-// createApp constructs the stickler CLI. Findings are written to stderr; the
-// ExitErrHandler is neutralized so Run returns errors to run().
+// createApp constructs the stickler CLI. The normalized report is written to
+// stdout (so machine formats pipe cleanly); the pass/fail status line is written
+// to stderr by run(). The ExitErrHandler is neutralized so Run returns errors.
 func createApp() *cli.Command {
 	return &cli.Command{
 		Name:           "stickler",
 		Usage:          "run the gomatic lint suite and report via exit code",
 		ArgsUsage:      "[root]",
-		Writer:         os.Stderr,
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "format", Value: string(stickler.OutputHuman), Usage: "output format (human, json, github)"},

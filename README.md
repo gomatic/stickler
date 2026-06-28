@@ -1,6 +1,6 @@
 # stickler
 
-The gomatic **lint runner** — a stickler for the rules. It executes a set of analyzer tools (the [`yze`](https://github.com/gomatic/yze) suite, `golangci-lint`, and others) to completion, normalizes their findings into one diagnostic schema, writes them to stderr in the chosen format, and **reports pass/fail via the process exit code**. Any finding or any tool error is a stickler failure; every tool still runs to completion first.
+The gomatic **lint runner** — a stickler for the rules. It executes a set of analyzer tools (the [`yze`](https://github.com/gomatic/yze) suite, `golangci-lint`, and others) to completion, normalizes their findings into one diagnostic schema, writes the report to stdout in the chosen format, prints a pass/fail status to stderr, and **reports pass/fail via the process exit code**. Any finding or any tool error is a stickler failure; every tool still runs to completion first.
 
 ```
 stickler [--format human|json|github] [root]

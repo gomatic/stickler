@@ -1,6 +1,7 @@
 package stickler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os/exec"
@@ -62,9 +63,11 @@ func NewGolangciRunner(command Command) Runner {
 func (golangciRunner) Name() string { return "golangci-lint" }
 
 func (g golangciRunner) Run(ctx context.Context, root string) ([]goyze.Diagnostic, error) {
-	out, execErr := g.command(ctx, "golangci-lint", "run", "--output.json.path", "stdout", root)
+	out, execErr := g.command(ctx, "golangci-lint", "run", "--output.json.path=stdout", root)
 	var parsed golangciOutput
-	if err := json.Unmarshal(out, &parsed); err != nil {
+	// golangci-lint v2 appends a human summary footer after the JSON on stdout, so
+	// decode only the first JSON value and ignore any trailing text.
+	if err := json.NewDecoder(bytes.NewReader(out)).Decode(&parsed); err != nil {
 		return nil, ErrGolangciFailed.With(firstError(execErr, err))
 	}
 	return adaptIssues(parsed.Issues), nil
