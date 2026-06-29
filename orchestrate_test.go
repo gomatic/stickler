@@ -22,7 +22,7 @@ type fakeRunner struct {
 
 func (f fakeRunner) Name() string { return f.name }
 
-func (f fakeRunner) Run(context.Context, string) ([]goyze.Diagnostic, error) {
+func (f fakeRunner) Run(context.Context, stickler.Root) ([]goyze.Diagnostic, error) {
 	if f.ran != nil {
 		*f.ran = true
 	}

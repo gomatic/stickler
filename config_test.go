@@ -72,6 +72,43 @@ func TestStringListRejectsMistypedDirective(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestStringListRejectsUnknownDirectiveKey(t *testing.T) {
+	var cfg stickler.Config
+	err := yaml.Unmarshal([]byte("runners:\n  addd: [revive]\n"), &cfg)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, stickler.ErrBadListSetting))
+}
+
+func TestStringListReplaceMappingReplacesAccumulatedBase(t *testing.T) {
+	global := parseConfig(t, "runners: [yze, golangci-lint]\n")
+	repo := parseConfig(t, "runners:\n  replace: [revive]\n")
+
+	got := stickler.Resolve(global, repo)
+
+	assert.Equal(t, []string{"revive"}, got.Runners)
+}
+
+func TestResolveDeepMergesUntouchedAnalyzerSetting(t *testing.T) {
+	global := parseConfig(t, `
+analyzers:
+  ptrrecv:
+    allow: [pkg.A]
+    deny: [pkg.X]
+`)
+	repo := parseConfig(t, `
+analyzers:
+  ptrrecv:
+    allow:
+      add: [pkg.B]
+`)
+
+	got := stickler.Resolve(global, repo)
+
+	assert.Equal(t, []string{"pkg.A", "pkg.B"}, got.Analyzers["ptrrecv"]["allow"])
+	assert.Equal(t, []string{"pkg.X"}, got.Analyzers["ptrrecv"]["deny"], "a setting the repo never touches must survive")
+}
+
 func TestLoadLayersSkipsMissingAndParsesPresent(t *testing.T) {
 	read := func(path string) ([]byte, error) {
 		if path == "global" {
@@ -103,4 +140,8 @@ func TestConfigPaths(t *testing.T) {
 
 	noXDG := stickler.ConfigPaths(func(string) string { return "" }, "/home/u", "/repo")
 	assert.Equal(t, "/home/u/.config/stickler/config.yaml", noXDG[0])
+
+	// XDG spec: a relative $XDG_CONFIG_HOME is invalid and must be ignored.
+	relXDG := stickler.ConfigPaths(func(string) string { return "relative/dir" }, "/home/u", "/repo")
+	assert.Equal(t, "/home/u/.config/stickler/config.yaml", relXDG[0])
 }

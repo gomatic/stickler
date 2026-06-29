@@ -2,7 +2,6 @@ package stickler
 
 import (
 	"path/filepath"
-	"slices"
 
 	errs "github.com/gomatic/go-error"
 	"gopkg.in/yaml.v3"
@@ -16,47 +15,6 @@ const (
 	// add/remove/replace mapping.
 	ErrBadListSetting errs.Const = "list setting must be a sequence or an add/remove/replace mapping"
 )
-
-// StringList is a list-valued setting in one configuration layer. It merges onto
-// the value accumulated from lower layers either by replacing it (when written as
-// a YAML sequence) or by adding and removing entries (when written as a mapping
-// with add/remove/replace keys). An absent setting leaves the lower value intact.
-type StringList struct {
-	replace []string
-	add     []string
-	remove  []string
-}
-
-// UnmarshalYAML accepts a sequence (replace) or an add/remove/replace mapping.
-func (l *StringList) UnmarshalYAML(node *yaml.Node) error {
-	switch node.Kind {
-	case yaml.SequenceNode:
-		return node.Decode(&l.replace)
-	case yaml.MappingNode:
-		var directives struct {
-			Add     []string `yaml:"add"`
-			Remove  []string `yaml:"remove"`
-			Replace []string `yaml:"replace"`
-		}
-		if err := node.Decode(&directives); err != nil {
-			return err
-		}
-		l.add, l.remove, l.replace = directives.Add, directives.Remove, directives.Replace
-		return nil
-	default:
-		return ErrBadListSetting
-	}
-}
-
-// applyTo folds this layer's directives onto the accumulated base value.
-func (l StringList) applyTo(base []string) []string {
-	out := base
-	if l.replace != nil {
-		out = slices.Clone(l.replace)
-	}
-	out = append(out, l.add...)
-	return slices.DeleteFunc(out, func(s string) bool { return slices.Contains(l.remove, s) })
-}
 
 // Config is one configuration layer (global or repo).
 type Config struct {
@@ -117,16 +75,26 @@ func LoadLayers(read func(path string) ([]byte, error), paths ...string) ([]Conf
 	return layers, nil
 }
 
+// HomeDir is the current user's home directory, the base for the default global
+// config location.
+type HomeDir string
+
+// RepoRoot is the directory whose .stickler.yaml supplies the repository
+// configuration layer.
+type RepoRoot string
+
 // ConfigPaths returns the ordered config layer paths: the global config, then the
 // repository's .stickler.yaml.
-func ConfigPaths(getenv func(string) string, home, repoRoot string) []string {
-	return []string{globalConfigPath(getenv, home), filepath.Join(repoRoot, ".stickler.yaml")}
+func ConfigPaths(getenv func(string) string, home HomeDir, repoRoot RepoRoot) []string {
+	return []string{globalConfigPath(getenv, home), filepath.Join(string(repoRoot), ".stickler.yaml")}
 }
 
-// globalConfigPath returns the XDG global config path.
-func globalConfigPath(getenv func(string) string, home string) string {
-	if xdg := getenv("XDG_CONFIG_HOME"); xdg != "" {
+// globalConfigPath returns the XDG global config path. Per the XDG Base Directory
+// specification a relative $XDG_CONFIG_HOME is invalid and must be ignored, so the
+// default ~/.config location is used unless the value is an absolute path.
+func globalConfigPath(getenv func(string) string, home HomeDir) string {
+	if xdg := getenv("XDG_CONFIG_HOME"); filepath.IsAbs(xdg) {
 		return filepath.Join(xdg, "stickler", "config.yaml")
 	}
-	return filepath.Join(home, ".config", "stickler", "config.yaml")
+	return filepath.Join(string(home), ".config", "stickler", "config.yaml")
 }

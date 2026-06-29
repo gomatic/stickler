@@ -2,6 +2,7 @@ package stickler_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -74,6 +75,54 @@ func TestFormatGitHubEmitsAnnotationsByLevel(t *testing.T) {
 	assert.Contains(t, buf.String(), "::error file=a.go,line=1,col=1::e")
 	assert.Contains(t, buf.String(), "::warning file=b.go,line=2,col=2::w")
 	assert.Contains(t, buf.String(), "::notice file=c.go,line=3,col=3::i")
+}
+
+func TestFormatGitHubEscapesDataAndPropertiesAndCarriesRule(t *testing.T) {
+	var buf bytes.Buffer
+	res := resultWith([]goyze.Diagnostic{{
+		Path:     "a:b,c.go",
+		Line:     5,
+		Col:      7,
+		Severity: goyze.SeverityError,
+		Rule:     "yze/gotostmt",
+		Message:  "100%\r\nsecond, line: x",
+	}}, nil)
+
+	require.NoError(t, stickler.Format(&buf, stickler.OutputGitHub, res))
+
+	// Property values escape %,CR,LF plus comma and colon; the message escapes only
+	// %,CR,LF (its commas and colon stay literal); % is escaped first so %0D/%0A are
+	// not re-escaped; the rule rides in title=.
+	assert.Equal(t,
+		"::error title=yze/gotostmt,file=a%3Ab%2Cc.go,line=5,col=7::100%25%0D%0Asecond, line: x\n",
+		buf.String(),
+	)
+}
+
+func TestFormatGitHubOmitsTitleWhenRuleAbsent(t *testing.T) {
+	var buf bytes.Buffer
+	res := resultWith([]goyze.Diagnostic{{Path: "a.go", Line: 1, Col: 2, Severity: goyze.SeverityWarning, Message: "m"}}, nil)
+
+	require.NoError(t, stickler.Format(&buf, stickler.OutputGitHub, res))
+
+	assert.Equal(t, "::warning file=a.go,line=1,col=2::m\n", buf.String())
+}
+
+func TestFormatJSONRoundTripsIntoDiagnosticSchema(t *testing.T) {
+	var buf bytes.Buffer
+	want := goyze.Diagnostic{Tool: "yze", Rule: "yze/gotostmt", Path: "a.go", Line: 3, Col: 2, Severity: goyze.SeverityError, Message: "boom"}
+	res := resultWith([]goyze.Diagnostic{want}, []error{errors.New("oops")})
+
+	require.NoError(t, stickler.Format(&buf, stickler.OutputJSON, res))
+
+	var decoded struct {
+		Diagnostics []goyze.Diagnostic `json:"diagnostics"`
+		Errors      []string           `json:"errors"`
+	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &decoded))
+	require.Len(t, decoded.Diagnostics, 1)
+	assert.Equal(t, want, decoded.Diagnostics[0])
+	assert.Equal(t, []string{"oops"}, decoded.Errors)
 }
 
 func TestFormatGitHubReportsWriteError(t *testing.T) {

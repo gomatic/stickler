@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	errs "github.com/gomatic/go-error"
 	"github.com/urfave/cli/v3"
@@ -20,6 +21,10 @@ const errFailed errs.Const = "lint failures found"
 
 // appName is the CLI name.
 const appName = "stickler"
+
+// defaultTimeout bounds an entire lint pass so a wedged linter cannot hang the run
+// forever; it is overridable with --timeout.
+const defaultTimeout = 5 * time.Minute
 
 // Indirected dependencies, so tests supply fake runners and config instead of
 // spawning real subprocesses or reading real files.
@@ -59,21 +64,24 @@ func createApp() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "format", Usage: "output format (human, json, github); overrides config"},
 			&cli.StringFlag{Name: "root", Usage: "directory whose .stickler.yaml is loaded (default: the target)"},
+			&cli.DurationFlag{Name: "timeout", Value: defaultTimeout, Usage: "maximum duration for the whole lint pass"},
 		},
 		Action: action,
 	}
 }
 
-// action loads configuration, runs the configured tools, renders the result, and
-// signals failure via errFailed.
+// action loads configuration, runs the configured tools under an overall timeout,
+// renders the result, and signals failure via errFailed.
 func action(ctx context.Context, cmd *cli.Command) error {
+	ctx, cancel := context.WithTimeout(ctx, cmd.Duration("timeout"))
+	defer cancel()
 	root := rootOf(cmd.Args().Slice())
-	resolved, err := configure(configRoot(cmd.String("root"), root))
+	resolved, err := configure(configRoot(stickler.RepoRoot(cmd.String("root")), root))
 	if err != nil {
 		return err
 	}
 	result := stickler.Orchestrate(ctx, root, buildRunners(resolved.Runners))
-	if err := stickler.Format(cmd.Writer, chooseFormat(cmd.String("format"), resolved.Format), result); err != nil {
+	if err := stickler.Format(cmd.Writer, chooseFormat(stickler.OutputFormat(cmd.String("format")), stickler.OutputFormat(resolved.Format)), result); err != nil {
 		return err
 	}
 	if result.Failed() {
@@ -83,9 +91,9 @@ func action(ctx context.Context, cmd *cli.Command) error {
 }
 
 // configure loads and resolves the global and repo configuration layers.
-func configure(repoRoot string) (stickler.Resolved, error) {
+func configure(repoRoot stickler.RepoRoot) (stickler.Resolved, error) {
 	home, _ := userHomeDir()
-	layers, err := stickler.LoadLayers(readFile, stickler.ConfigPaths(getenv, home, repoRoot)...)
+	layers, err := stickler.LoadLayers(readFile, stickler.ConfigPaths(getenv, stickler.HomeDir(home), repoRoot)...)
 	if err != nil {
 		return stickler.Resolved{}, err
 	}
@@ -94,31 +102,31 @@ func configure(repoRoot string) (stickler.Resolved, error) {
 
 // configRoot is the directory whose .stickler.yaml applies: the explicit --root,
 // else the current directory (a package pattern is not a config directory).
-func configRoot(flag, target string) string {
+func configRoot(flag stickler.RepoRoot, target stickler.Root) stickler.RepoRoot {
 	if flag != "" {
 		return flag
 	}
 	if target == "./..." {
 		return "."
 	}
-	return target
+	return stickler.RepoRoot(target)
 }
 
 // chooseFormat applies the precedence flag > config > human.
-func chooseFormat(flag, configured string) stickler.OutputFormat {
+func chooseFormat(flag, configured stickler.OutputFormat) stickler.OutputFormat {
 	if flag != "" {
-		return stickler.OutputFormat(flag)
+		return flag
 	}
 	if configured != "" {
-		return stickler.OutputFormat(configured)
+		return configured
 	}
 	return stickler.OutputHuman
 }
 
 // rootOf defaults to the whole module when no root is named.
-func rootOf(args []string) string {
+func rootOf(args []string) stickler.Root {
 	if len(args) == 0 {
 		return "./..."
 	}
-	return args[0]
+	return stickler.Root(args[0])
 }

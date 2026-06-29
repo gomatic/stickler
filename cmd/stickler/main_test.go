@@ -21,8 +21,19 @@ type fakeRunner struct {
 
 func (fakeRunner) Name() string { return "fake" }
 
-func (f fakeRunner) Run(context.Context, string) ([]goyze.Diagnostic, error) {
+func (f fakeRunner) Run(context.Context, stickler.Root) ([]goyze.Diagnostic, error) {
 	return f.diags, f.err
+}
+
+// blockingRunner blocks until the context is cancelled, then returns the context
+// error — it lets a test prove the overall timeout cancels a wedged linter.
+type blockingRunner struct{}
+
+func (blockingRunner) Name() string { return "block" }
+
+func (blockingRunner) Run(ctx context.Context, _ stickler.Root) ([]goyze.Diagnostic, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func swapReadFile(t *testing.T, content string, err error) {
@@ -107,6 +118,15 @@ func TestActionUsesConfiguredRunnersAndFormat(t *testing.T) {
 	assert.Contains(t, out, `"diagnostics"`) // config format json
 }
 
+func TestActionTimeoutCancelsWedgedRunner(t *testing.T) {
+	swapRunners(t, blockingRunner{})
+
+	out, err := runApp(t, appName, "--timeout", "10ms")
+
+	require.Error(t, err)
+	assert.Contains(t, out, "context deadline exceeded", "the overall timeout must cancel a wedged linter")
+}
+
 func TestActionReportsConfigError(t *testing.T) {
 	swapReadFile(t, "runners: : :\n", nil)
 
@@ -124,9 +144,9 @@ func TestDefaultBuildRunners(t *testing.T) {
 }
 
 func TestConfigRoot(t *testing.T) {
-	assert.Equal(t, "/explicit", configRoot("/explicit", "pkg/x"))
-	assert.Equal(t, ".", configRoot("", "./..."))
-	assert.Equal(t, "pkg/x", configRoot("", "pkg/x"))
+	assert.Equal(t, stickler.RepoRoot("/explicit"), configRoot("/explicit", "pkg/x"))
+	assert.Equal(t, stickler.RepoRoot("."), configRoot("", "./..."))
+	assert.Equal(t, stickler.RepoRoot("pkg/x"), configRoot("", "pkg/x"))
 }
 
 func TestChooseFormat(t *testing.T) {
@@ -136,8 +156,8 @@ func TestChooseFormat(t *testing.T) {
 }
 
 func TestRootOfDefaultsToModule(t *testing.T) {
-	assert.Equal(t, "./...", rootOf(nil))
-	assert.Equal(t, "pkg/x", rootOf([]string{"pkg/x"}))
+	assert.Equal(t, stickler.Root("./..."), rootOf(nil))
+	assert.Equal(t, stickler.Root("pkg/x"), rootOf([]string{"pkg/x"}))
 }
 
 func TestRunExitCodes(t *testing.T) {

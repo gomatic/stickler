@@ -14,11 +14,15 @@ import (
 // ErrRunner wraps a failure from one tool runner, tagged with the runner name.
 const ErrRunner errs.Const = "lint runner failed"
 
+// Root is the directory or package pattern a runner analyzes (e.g. "./..." or a
+// path); it is the target every Runner operates over.
+type Root string
+
 // Runner executes one analyzer tool over a root directory and returns its
 // findings as normalized diagnostics.
 type Runner interface {
 	Name() string
-	Run(ctx context.Context, root string) ([]goyze.Diagnostic, error)
+	Run(ctx context.Context, root Root) ([]goyze.Diagnostic, error)
 }
 
 // Result aggregates every runner's findings and failures from one stickler pass.
@@ -36,7 +40,7 @@ func (r Result) Failed() bool {
 // Orchestrate runs every runner to completion over root, collecting all
 // diagnostics and wrapping any runner error with its name. One runner's failure
 // never prevents the others from running.
-func Orchestrate(ctx context.Context, root string, runners []Runner) Result {
+func Orchestrate(ctx context.Context, root Root, runners []Runner) Result {
 	result := Result{}
 	for _, runner := range runners {
 		diags, err := runner.Run(ctx, root)
