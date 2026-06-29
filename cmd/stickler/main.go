@@ -22,6 +22,11 @@ const errFailed errs.Const = "lint failures found"
 // appName is the CLI name.
 const appName = "stickler"
 
+// version is the application version, exposed via --version. It defaults to "dev"
+// and is overwritten at build time via ldflags: -X main.version={{.Version}}
+// (see .goreleaser.yml).
+var version = "dev"
+
 // defaultTimeout bounds an entire lint pass so a wedged linter cannot hang the run
 // forever; it is overridable with --timeout.
 const defaultTimeout = 5 * time.Minute
@@ -59,6 +64,7 @@ func run(args []string) int {
 func createApp() *cli.Command {
 	return &cli.Command{
 		Name:           appName,
+		Version:        version,
 		Usage:          "run the gomatic lint suite and report via exit code",
 		ArgsUsage:      "[root]",
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
