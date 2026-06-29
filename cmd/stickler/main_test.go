@@ -8,14 +8,15 @@ import (
 
 	errs "github.com/gomatic/go-error"
 	goyze "github.com/gomatic/go-yze"
-	"github.com/gomatic/stickler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gomatic/stickler"
 )
 
 type fakeRunner struct {
-	diags []goyze.Diagnostic
 	err   error
+	diags []goyze.Diagnostic
 }
 
 func (fakeRunner) Name() string { return "fake" }
@@ -43,7 +44,7 @@ func runApp(t *testing.T, args ...string) (string, error) {
 func TestActionCleanRunSucceeds(t *testing.T) {
 	swapRunners(t, fakeRunner{})
 
-	out, err := runApp(t, "stickler")
+	out, err := runApp(t, appName)
 
 	require.NoError(t, err)
 	assert.Empty(t, out)
@@ -54,7 +55,7 @@ func TestActionReportsFindingsAndFails(t *testing.T) {
 		{Path: "a.go", Line: 3, Col: 2, Severity: goyze.SeverityError, Message: "boom", Rule: "yze/go/gotostmt"},
 	}})
 
-	out, err := runApp(t, "stickler")
+	out, err := runApp(t, appName)
 
 	require.Error(t, err)
 	assert.Contains(t, out, "a.go:3:2: boom [error] (yze/go/gotostmt)")
@@ -63,7 +64,7 @@ func TestActionReportsFindingsAndFails(t *testing.T) {
 func TestActionRunnerErrorFails(t *testing.T) {
 	swapRunners(t, fakeRunner{err: errs.Const("tool crashed")})
 
-	_, err := runApp(t, "stickler")
+	_, err := runApp(t, appName)
 
 	require.Error(t, err)
 }
@@ -71,7 +72,7 @@ func TestActionRunnerErrorFails(t *testing.T) {
 func TestActionRejectsUnknownFormat(t *testing.T) {
 	swapRunners(t, fakeRunner{})
 
-	_, err := runApp(t, "stickler", "--format", "nope")
+	_, err := runApp(t, appName, "--format", "nope")
 
 	require.Error(t, err)
 }
@@ -91,10 +92,10 @@ func TestRootOfDefaultsToModule(t *testing.T) {
 
 func TestRunExitCodes(t *testing.T) {
 	swapRunners(t, fakeRunner{})
-	assert.Equal(t, 0, run([]string{"stickler"}))
+	assert.Equal(t, 0, run([]string{appName}))
 
 	swapRunners(t, fakeRunner{diags: []goyze.Diagnostic{{Path: "a.go", Message: "x"}}})
-	assert.Equal(t, 1, run([]string{"stickler"}))
+	assert.Equal(t, 1, run([]string{appName}))
 }
 
 func TestMainExits(t *testing.T) {
@@ -104,7 +105,7 @@ func TestMainExits(t *testing.T) {
 
 	var code int
 	osExit = func(c int) { code = c }
-	os.Args = []string{"stickler"}
+	os.Args = []string{appName}
 
 	main()
 

@@ -7,9 +7,10 @@ import (
 
 	errs "github.com/gomatic/go-error"
 	goyze "github.com/gomatic/go-yze"
-	"github.com/gomatic/stickler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gomatic/stickler"
 )
 
 func fakeCommand(out string, err error) stickler.Command {
@@ -17,14 +18,14 @@ func fakeCommand(out string, err error) stickler.Command {
 }
 
 func TestYzeRunnerParsesSticklerJSON(t *testing.T) {
-	out := `{"diagnostics":[{"tool":"yze","rule":"yze/go/gotostmt","path":"a.go","line":3,"col":2,"severity":"error","message":"goto is not permitted"}]}`
+	out := `{"diagnostics":[{"tool":"yze","rule":"yze/gotostmt","path":"a.go","line":3,"col":2,"severity":"error","message":"goto is not permitted"}]}`
 	runner := stickler.NewYzeRunner(fakeCommand(out, nil))
 
 	assert.Equal(t, "yze", runner.Name())
 	diags, err := runner.Run(context.Background(), ".")
 	require.NoError(t, err)
 	require.Len(t, diags, 1)
-	assert.Equal(t, "yze/go/gotostmt", diags[0].Rule)
+	assert.Equal(t, "yze/gotostmt", diags[0].Rule)
 }
 
 func TestYzeRunnerReportsExecFailureWhenOutputUnparseable(t *testing.T) {

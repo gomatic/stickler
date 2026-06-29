@@ -9,13 +9,17 @@ import (
 	"os"
 
 	errs "github.com/gomatic/go-error"
-	"github.com/gomatic/stickler"
 	"github.com/urfave/cli/v3"
+
+	"github.com/gomatic/stickler"
 )
 
 // errFailed is returned by the action to drive a non-zero exit when the lint pass
 // failed (any finding or runner error).
 const errFailed errs.Const = "lint failures found"
+
+// appName is the CLI name.
+const appName = "stickler"
 
 // runnersFor is indirected so tests can supply fake runners instead of spawning
 // real subprocesses.
@@ -37,7 +41,7 @@ func main() { osExit(run(os.Args)) }
 // run builds and executes the CLI, returning the process exit code.
 func run(args []string) int {
 	if err := createApp().Run(context.Background(), args); err != nil {
-		fmt.Fprintln(os.Stderr, "stickler:", err)
+		_, _ = fmt.Fprintln(os.Stderr, appName+":", err)
 		return 1
 	}
 	return 0
@@ -48,7 +52,7 @@ func run(args []string) int {
 // to stderr by run(). The ExitErrHandler is neutralized so Run returns errors.
 func createApp() *cli.Command {
 	return &cli.Command{
-		Name:           "stickler",
+		Name:           appName,
 		Usage:          "run the gomatic lint suite and report via exit code",
 		ArgsUsage:      "[root]",
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},

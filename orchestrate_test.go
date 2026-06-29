@@ -7,16 +7,17 @@ import (
 
 	errs "github.com/gomatic/go-error"
 	goyze "github.com/gomatic/go-yze"
-	"github.com/gomatic/stickler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gomatic/stickler"
 )
 
 type fakeRunner struct {
-	name  string
-	diags []goyze.Diagnostic
 	err   error
 	ran   *bool
+	name  string
+	diags []goyze.Diagnostic
 }
 
 func (f fakeRunner) Name() string { return f.name }
@@ -34,7 +35,7 @@ func diag(rule string) goyze.Diagnostic {
 
 func TestOrchestrateCollectsDiagnosticsFromEveryRunner(t *testing.T) {
 	result := stickler.Orchestrate(context.Background(), ".", []stickler.Runner{
-		fakeRunner{name: "yze", diags: []goyze.Diagnostic{diag("yze/go/gotostmt")}},
+		fakeRunner{name: "yze", diags: []goyze.Diagnostic{diag("yze/gotostmt")}},
 		fakeRunner{name: "golangci", diags: []goyze.Diagnostic{diag("staticcheck/SA1000")}},
 	})
 
@@ -47,7 +48,7 @@ func TestOrchestrateRunsAllToCompletionDespiteAnError(t *testing.T) {
 	secondRan := false
 	result := stickler.Orchestrate(context.Background(), ".", []stickler.Runner{
 		fakeRunner{name: "broken", err: errs.Const("tool crashed")},
-		fakeRunner{name: "yze", diags: []goyze.Diagnostic{diag("yze/go/errconst")}, ran: &secondRan},
+		fakeRunner{name: "yze", diags: []goyze.Diagnostic{diag("yze/errconst")}, ran: &secondRan},
 	})
 
 	assert.True(t, secondRan, "later runners must still run after an earlier error")

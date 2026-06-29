@@ -7,9 +7,10 @@ import (
 
 	errs "github.com/gomatic/go-error"
 	goyze "github.com/gomatic/go-yze"
-	"github.com/gomatic/stickler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gomatic/stickler"
 )
 
 type failWriter struct{}
@@ -23,13 +24,13 @@ func resultWith(diags []goyze.Diagnostic, errs []error) stickler.Result {
 func TestFormatHumanWritesDiagnosticsAndErrors(t *testing.T) {
 	var buf bytes.Buffer
 	res := resultWith(
-		[]goyze.Diagnostic{{Path: "a.go", Line: 3, Col: 2, Severity: goyze.SeverityError, Message: "boom", Rule: "yze/go/gotostmt"}},
+		[]goyze.Diagnostic{{Path: "a.go", Line: 3, Col: 2, Severity: goyze.SeverityError, Message: "boom", Rule: "yze/gotostmt"}},
 		[]error{errors.New("tool x failed")},
 	)
 
 	require.NoError(t, stickler.Format(&buf, stickler.OutputHuman, res))
 
-	assert.Contains(t, buf.String(), "a.go:3:2: boom [error] (yze/go/gotostmt)")
+	assert.Contains(t, buf.String(), "a.go:3:2: boom [error] (yze/gotostmt)")
 	assert.Contains(t, buf.String(), "runner error: tool x failed")
 }
 
