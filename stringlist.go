@@ -14,9 +14,17 @@ type listDirectives struct {
 	Replace []string `yaml:"replace"`
 }
 
+// Directive keys: the mapping keys a list-valued setting accepts to mutate (rather
+// than replace) the accumulated value.
+const (
+	directiveAdd     = "add"
+	directiveRemove  = "remove"
+	directiveReplace = "replace"
+)
+
 // listDirectiveKeys is the set of mapping keys a StringList accepts. Any other key
 // is a configuration typo and is rejected rather than silently ignored.
-var listDirectiveKeys = map[string]bool{"add": true, "remove": true, "replace": true}
+var listDirectiveKeys = map[string]bool{directiveAdd: true, directiveRemove: true, directiveReplace: true}
 
 // StringList is a list-valued setting in one configuration layer. It merges onto
 // the value accumulated from lower layers either by replacing it (when written as

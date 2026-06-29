@@ -35,4 +35,19 @@ runners:
 
 Maps (the `analyzers` tree) deep-merge; each setting's list follows the same replace/add/remove rules. Precedence for output format is `--format` flag > config > `human`.
 
-Built on the [`go-yze`](https://github.com/gomatic/go-yze) diagnostic schema. Forwarding the merged `analyzers` settings to `yze --config`, and `--fix` (delegating to each tool's fixer), are the next steps; today stickler selects runners and output format from the merged config.
+### Per-tool config overlays (`config:`)
+
+A `config:` block carries a **generic, per-tool configuration overlay** keyed by runner name. Each overlay is deep-merged onto that tool's *own* base config file at run time, so per-repo lint deltas live in `.stickler.yaml` instead of in a divergent, unmanaged base config. The merge is generic — golangci-lint is just one configured tool — and follows the same polymorphism as everything else: a mapping deep-merges, a scalar or sequence replaces, and a mapping written with only `add`/`remove`/`replace` keys mutates the base list.
+
+```yaml
+config:
+  golangci-lint:                  # merged onto the repo's managed .golangci.yaml
+    linters:
+      settings:
+        gosec:
+          excludes: { add: [G204] }   # add a per-repo exclude on top of the central config
+```
+
+At lint time stickler reads the tool's base config (for golangci-lint, the repo's `.golangci.yaml`/`.golangci.yml`), folds the overlays onto it, writes the effective config to a temp file, and runs the tool with `--config` pointing at it. With no overlay the tool is run as before (its own config discovery). This is how a repo keeps the **uniform, managed** base config while still expressing the handful of rules it genuinely needs to differ on.
+
+Built on the [`go-yze`](https://github.com/gomatic/go-yze) diagnostic schema. Forwarding the merged `analyzers` settings to `yze --config`, and `--fix` (delegating to each tool's fixer), are the next steps.

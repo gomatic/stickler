@@ -106,7 +106,12 @@ analyzers:
 	got := stickler.Resolve(global, repo)
 
 	assert.Equal(t, []string{"pkg.A", "pkg.B"}, got.Analyzers["ptrrecv"]["allow"])
-	assert.Equal(t, []string{"pkg.X"}, got.Analyzers["ptrrecv"]["deny"], "a setting the repo never touches must survive")
+	assert.Equal(
+		t,
+		[]string{"pkg.X"},
+		got.Analyzers["ptrrecv"]["deny"],
+		"a setting the repo never touches must survive",
+	)
 }
 
 func TestLoadLayersSkipsMissingAndParsesPresent(t *testing.T) {

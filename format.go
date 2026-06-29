@@ -97,7 +97,8 @@ func githubProps(d goyze.Diagnostic) string {
 	if d.Rule != "" {
 		props = append(props, "title="+escapeGitHubProperty(ghValue(d.Rule)))
 	}
-	props = append(props,
+	props = append(
+		props,
 		"file="+escapeGitHubProperty(ghValue(d.Path)),
 		fmt.Sprintf("line=%d", d.Line),
 		fmt.Sprintf("col=%d", d.Col),

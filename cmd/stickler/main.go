@@ -36,9 +36,10 @@ var (
 	buildRunners = defaultBuildRunners
 )
 
-// defaultBuildRunners builds the configured runners over real subprocesses.
-func defaultBuildRunners(names []string) []stickler.Runner {
-	return stickler.BuildRunners(stickler.ExecCommand, names)
+// defaultBuildRunners builds the configured runners over real subprocesses, giving
+// each config-file runner the context it needs to merge its effective config.
+func defaultBuildRunners(names []string, ctx stickler.RunnerContext) []stickler.Runner {
+	return stickler.BuildRunners(stickler.ExecCommand, names, ctx)
 }
 
 func main() { osExit(run(os.Args)) }
@@ -64,7 +65,11 @@ func createApp() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "format", Usage: "output format (human, json, github); overrides config"},
 			&cli.StringFlag{Name: "root", Usage: "directory whose .stickler.yaml is loaded (default: the target)"},
-			&cli.DurationFlag{Name: "timeout", Value: defaultTimeout, Usage: "maximum duration for the whole lint pass"},
+			&cli.DurationFlag{
+				Name:  "timeout",
+				Value: defaultTimeout,
+				Usage: "maximum duration for the whole lint pass",
+			},
 		},
 		Action: action,
 	}
@@ -76,11 +81,13 @@ func action(ctx context.Context, cmd *cli.Command) error {
 	ctx, cancel := context.WithTimeout(ctx, cmd.Duration("timeout"))
 	defer cancel()
 	root := rootOf(cmd.Args().Slice())
-	resolved, err := configure(configRoot(stickler.RepoRoot(cmd.String("root")), root))
+	repoRoot := configRoot(stickler.RepoRoot(cmd.String("root")), root)
+	resolved, err := configure(repoRoot)
 	if err != nil {
 		return err
 	}
-	result := stickler.Orchestrate(ctx, root, buildRunners(resolved.Runners))
+	runnerCtx := stickler.RunnerContext{BaseDir: string(repoRoot), Config: resolved.Config}
+	result := stickler.Orchestrate(ctx, root, buildRunners(resolved.Runners, runnerCtx))
 	if err := stickler.Format(cmd.Writer, chooseFormat(stickler.OutputFormat(cmd.String("format")), stickler.OutputFormat(resolved.Format)), result); err != nil {
 		return err
 	}

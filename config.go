@@ -16,16 +16,23 @@ const (
 	ErrBadListSetting errs.Const = "list setting must be a sequence or an add/remove/replace mapping"
 )
 
-// Config is one configuration layer (global or repo).
+// Config is one configuration layer (global or repo). Config holds per-tool config
+// overlays keyed by runner name (the `config:` block); each is deep-merged onto
+// that tool's own base config file at run time.
 type Config struct {
 	Analyzers map[string]map[string]StringList `yaml:"analyzers"`
+	Config    map[string]Overlay               `yaml:"config"`
 	Format    string                           `yaml:"format"`
 	Runners   StringList                       `yaml:"runners"`
 }
 
-// Resolved is the concrete configuration after all layers are folded.
+// Resolved is the concrete configuration after all layers are folded. Config maps
+// each runner name to the ordered list of its per-layer overlays (global first,
+// repo last); a config-file runner folds them onto its base config in the repo at
+// run time, since that base lives in the repo, not in any stickler layer.
 type Resolved struct {
 	Analyzers map[string]map[string][]string
+	Config    map[string][]Overlay
 	Format    string
 	Runners   []string
 }
@@ -33,15 +40,24 @@ type Resolved struct {
 // Resolve folds the layers in order (global first, repo last), applying each
 // layer's add/remove/replace directives onto the accumulated result.
 func Resolve(layers ...Config) Resolved {
-	resolved := Resolved{Analyzers: map[string]map[string][]string{}}
+	resolved := Resolved{Analyzers: map[string]map[string][]string{}, Config: map[string][]Overlay{}}
 	for _, layer := range layers {
 		resolved.Runners = layer.Runners.applyTo(resolved.Runners)
 		if layer.Format != "" {
 			resolved.Format = layer.Format
 		}
 		mergeAnalyzers(resolved.Analyzers, layer.Analyzers)
+		appendConfigOverlays(resolved.Config, layer.Config)
 	}
 	return resolved
+}
+
+// appendConfigOverlays appends each tool's overlay from one layer onto that tool's
+// ordered overlay list, preserving layer order (global first, repo last).
+func appendConfigOverlays(acc map[string][]Overlay, layer map[string]Overlay) {
+	for tool, overlay := range layer {
+		acc[tool] = append(acc[tool], overlay)
+	}
 }
 
 // mergeAnalyzers folds a layer's per-analyzer settings onto the accumulator.

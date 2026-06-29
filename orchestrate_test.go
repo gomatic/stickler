@@ -30,7 +30,14 @@ func (f fakeRunner) Run(context.Context, stickler.Root) ([]goyze.Diagnostic, err
 }
 
 func diag(rule string) goyze.Diagnostic {
-	return goyze.Diagnostic{Tool: "yze", Rule: rule, Path: "a.go", Line: 1, Severity: goyze.SeverityError, Message: rule}
+	return goyze.Diagnostic{
+		Tool:     "yze",
+		Rule:     rule,
+		Path:     "a.go",
+		Line:     1,
+		Severity: goyze.SeverityError,
+		Message:  rule,
+	}
 }
 
 func TestOrchestrateCollectsDiagnosticsFromEveryRunner(t *testing.T) {

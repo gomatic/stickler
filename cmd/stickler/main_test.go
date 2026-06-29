@@ -52,7 +52,7 @@ func swapRunners(t *testing.T, runners ...stickler.Runner) {
 	t.Helper()
 	original := buildRunners
 	t.Cleanup(func() { buildRunners = original })
-	buildRunners = func([]string) []stickler.Runner { return runners }
+	buildRunners = func([]string, stickler.RunnerContext) []stickler.Runner { return runners }
 	swapReadFile(t, "", errs.Const("no config")) // hermetic: no config files
 }
 
@@ -105,9 +105,11 @@ func TestActionUsesConfiguredRunnersAndFormat(t *testing.T) {
 	var gotNames []string
 	originalBuild := buildRunners
 	t.Cleanup(func() { buildRunners = originalBuild })
-	buildRunners = func(names []string) []stickler.Runner {
+	buildRunners = func(names []string, _ stickler.RunnerContext) []stickler.Runner {
 		gotNames = names
-		return []stickler.Runner{fakeRunner{diags: []goyze.Diagnostic{{Path: "a.go", Rule: "yze/gotostmt", Message: "x"}}}}
+		return []stickler.Runner{
+			fakeRunner{diags: []goyze.Diagnostic{{Path: "a.go", Rule: "yze/gotostmt", Message: "x"}}},
+		}
 	}
 	swapReadFile(t, "runners: [yze]\nformat: json\n", nil)
 
@@ -136,7 +138,7 @@ func TestActionReportsConfigError(t *testing.T) {
 }
 
 func TestDefaultBuildRunners(t *testing.T) {
-	runners := defaultBuildRunners(nil)
+	runners := defaultBuildRunners(nil, stickler.RunnerContext{})
 
 	require.Len(t, runners, 2)
 	assert.Equal(t, "yze", runners[0].Name())

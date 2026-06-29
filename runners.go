@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -66,16 +67,33 @@ const (
 	RunnerGolangci RunnerName = "golangci-lint"
 )
 
+// golangci-lint invocation literals.
+const (
+	golangciRunVerb    = "run"
+	golangciConfigFlag = "--config="
+	golangciConfigYAML = ".golangci.yaml"
+	golangciConfigYML  = ".golangci.yml"
+)
+
+// RunnerContext carries what config-file runners need to build their effective
+// configuration: the repo directory holding the base config files and the resolved
+// per-tool overlays keyed by runner name.
+type RunnerContext struct {
+	Config  map[string][]Overlay
+	BaseDir string
+}
+
 // BuildRunners constructs the runners named in the resolved configuration,
-// defaulting to the full set when none are configured. Unknown runner names are
-// ignored.
-func BuildRunners(command Command, names []string) []Runner {
+// defaulting to the full set when none are configured. A config-file runner is
+// given its merger so it runs against the effective (base + overlay) config.
+// Unknown runner names are ignored.
+func BuildRunners(command Command, names []string, ctx RunnerContext) []Runner {
 	if len(names) == 0 {
 		names = []string{string(RunnerYze), string(RunnerGolangci)}
 	}
 	runners := make([]Runner, 0, len(names))
 	for _, name := range names {
-		if runner := newRunner(command, RunnerName(name)); runner != nil {
+		if runner := newRunner(command, RunnerName(name), ctx); runner != nil {
 			runners = append(runners, runner)
 		}
 	}
@@ -83,14 +101,28 @@ func BuildRunners(command Command, names []string) []Runner {
 }
 
 // newRunner maps a runner name to its Runner, or nil when the name is unknown.
-func newRunner(command Command, name RunnerName) Runner {
+func newRunner(command Command, name RunnerName, ctx RunnerContext) Runner {
 	switch name {
 	case RunnerYze:
 		return NewYzeRunner(command)
 	case RunnerGolangci:
-		return NewGolangciRunner(command)
+		return NewGolangciRunner(command, GolangciMerger(ctx.Config[string(RunnerGolangci)], ctx.BaseDir))
 	default:
 		return nil
+	}
+}
+
+// GolangciMerger builds the generic config merger for golangci-lint — the only
+// golangci-specific knowledge is its base config filenames and --config flag —
+// wired to the production I/O seams.
+func GolangciMerger(overlays []Overlay, baseDir string) ConfigMerger {
+	return ConfigMerger{
+		BaseNames: []string{golangciConfigYAML, golangciConfigYML},
+		Flag:      golangciConfigFlag,
+		Overlays:  overlays,
+		BaseDir:   baseDir,
+		Read:      os.ReadFile,
+		Temp:      OSTempWriter,
 	}
 }
 
@@ -123,23 +155,34 @@ func (y yzeRunner) Run(ctx context.Context, root Root) ([]goyze.Diagnostic, erro
 	return report.Diagnostics, nil
 }
 
-// golangciRunner runs golangci-lint and adapts its JSON issues to diagnostics.
+// golangciRunner runs golangci-lint against the effective (base + overlay) config
+// and adapts its JSON issues to diagnostics. The merge itself is generic; this
+// runner only supplies golangci's adapter and (via the merger) its config spec.
 type golangciRunner struct {
 	command Command
+	merger  ConfigMerger
 }
 
-// NewGolangciRunner builds a Runner that invokes golangci-lint.
-func NewGolangciRunner(command Command) Runner {
-	return golangciRunner{command: command}
+// NewGolangciRunner builds a Runner that invokes golangci-lint, merging the repo's
+// base .golangci.yaml with the configured overlays at run time via the merger.
+func NewGolangciRunner(command Command, merger ConfigMerger) Runner {
+	return golangciRunner{command: command, merger: merger}
 }
 
 func (golangciRunner) Name() string { return string(RunnerGolangci) }
 
-// Run executes golangci-lint. As with yze, a non-zero exit accompanied by parsed
-// issues is the findings path; a non-zero exit (or a top-level Report.Error) with
-// zero issues is a genuine tool failure surfaced as ErrGolangciFailed.
+// Run executes golangci-lint against the effective config. As with yze, a non-zero
+// exit accompanied by parsed issues is the findings path; a non-zero exit (or a
+// top-level Report.Error) with zero issues is a genuine tool failure surfaced as
+// ErrGolangciFailed. A failure to build the effective config is also a tool
+// failure, since the lint pass could not run.
 func (g golangciRunner) Run(ctx context.Context, root Root) ([]goyze.Diagnostic, error) {
-	out, execErr := g.command(ctx, RunnerGolangci, "run", "--output.json.path=stdout", "--", Arg(root))
+	configArgs, cleanup, err := g.merger.Args()
+	if err != nil {
+		return nil, ErrGolangciFailed.With(err)
+	}
+	defer cleanup()
+	out, execErr := g.command(ctx, RunnerGolangci, golangciArgs(configArgs, root)...)
 	parsed, parseErr := decodeGolangci(out)
 	if parseErr != nil {
 		return nil, ErrGolangciFailed.With(firstError(execErr, parseErr))
@@ -152,6 +195,14 @@ func (g golangciRunner) Run(ctx context.Context, root Root) ([]goyze.Diagnostic,
 		return nil, ErrGolangciFailed.With(execErr)
 	}
 	return diags, nil
+}
+
+// golangciArgs assembles the golangci-lint argv: the run verb and JSON output,
+// then any --config flag for the effective config, then the root after "--".
+func golangciArgs(configArgs []Arg, root Root) []Arg {
+	args := []Arg{golangciRunVerb, "--output.json.path=stdout"}
+	args = append(args, configArgs...)
+	return append(args, "--", Arg(root))
 }
 
 // decodeGolangci reads the first JSON value from golangci-lint's stdout, tolerating

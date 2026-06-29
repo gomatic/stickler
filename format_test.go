@@ -25,7 +25,9 @@ func resultWith(diags []goyze.Diagnostic, errs []error) stickler.Result {
 func TestFormatHumanWritesDiagnosticsAndErrors(t *testing.T) {
 	var buf bytes.Buffer
 	res := resultWith(
-		[]goyze.Diagnostic{{Path: "a.go", Line: 3, Col: 2, Severity: goyze.SeverityError, Message: "boom", Rule: "yze/gotostmt"}},
+		[]goyze.Diagnostic{
+			{Path: "a.go", Line: 3, Col: 2, Severity: goyze.SeverityError, Message: "boom", Rule: "yze/gotostmt"},
+		},
 		[]error{errors.New("tool x failed")},
 	)
 
@@ -93,7 +95,8 @@ func TestFormatGitHubEscapesDataAndPropertiesAndCarriesRule(t *testing.T) {
 	// Property values escape %,CR,LF plus comma and colon; the message escapes only
 	// %,CR,LF (its commas and colon stay literal); % is escaped first so %0D/%0A are
 	// not re-escaped; the rule rides in title=.
-	assert.Equal(t,
+	assert.Equal(
+		t,
 		"::error title=yze/gotostmt,file=a%3Ab%2Cc.go,line=5,col=7::100%25%0D%0Asecond, line: x\n",
 		buf.String(),
 	)
@@ -101,7 +104,10 @@ func TestFormatGitHubEscapesDataAndPropertiesAndCarriesRule(t *testing.T) {
 
 func TestFormatGitHubOmitsTitleWhenRuleAbsent(t *testing.T) {
 	var buf bytes.Buffer
-	res := resultWith([]goyze.Diagnostic{{Path: "a.go", Line: 1, Col: 2, Severity: goyze.SeverityWarning, Message: "m"}}, nil)
+	res := resultWith(
+		[]goyze.Diagnostic{{Path: "a.go", Line: 1, Col: 2, Severity: goyze.SeverityWarning, Message: "m"}},
+		nil,
+	)
 
 	require.NoError(t, stickler.Format(&buf, stickler.OutputGitHub, res))
 
@@ -110,7 +116,15 @@ func TestFormatGitHubOmitsTitleWhenRuleAbsent(t *testing.T) {
 
 func TestFormatJSONRoundTripsIntoDiagnosticSchema(t *testing.T) {
 	var buf bytes.Buffer
-	want := goyze.Diagnostic{Tool: "yze", Rule: "yze/gotostmt", Path: "a.go", Line: 3, Col: 2, Severity: goyze.SeverityError, Message: "boom"}
+	want := goyze.Diagnostic{
+		Tool:     "yze",
+		Rule:     "yze/gotostmt",
+		Path:     "a.go",
+		Line:     3,
+		Col:      2,
+		Severity: goyze.SeverityError,
+		Message:  "boom",
+	}
 	res := resultWith([]goyze.Diagnostic{want}, []error{errors.New("oops")})
 
 	require.NoError(t, stickler.Format(&buf, stickler.OutputJSON, res))
