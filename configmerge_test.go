@@ -78,6 +78,36 @@ func TestMergeTreeReplaceWithEmptyAndSequence(t *testing.T) {
 	want.Equal([]any{"only"}, seq["enable"], "a plain sequence replaces wholesale")
 }
 
+func TestMergeTreeAppliesDirectivesFromDecodedOverlay(t *testing.T) {
+	// Regression: a .stickler.yaml decoded through LoadLayers yields nested maps of
+	// the named Overlay type (not plain map[string]any). The merge must still
+	// deep-merge and apply directives — a plain-type assertion would silently leave
+	// the directive map in place and drop the base list.
+	want := assert.New(t)
+	read := func(string) ([]byte, error) {
+		return []byte("config:\n  golangci-lint:\n    linters:\n      settings:\n" +
+			"        gosec:\n          excludes: { add: [G101, G118] }\n" +
+			"        govet:\n          disable: { add: [fieldalignment] }\n"), nil
+	}
+	layers, err := LoadLayers(read, ".stickler.yaml")
+	require.NoError(t, err)
+	overlays := Resolve(layers...).Config["golangci-lint"]
+
+	base := map[string]any{"linters": map[string]any{"settings": map[string]any{
+		"gosec": map[string]any{"excludes": []any{"G115"}},
+		"govet": map[string]any{"enable-all": true},
+	}}}
+	settings := MergeTree(base, overlays)["linters"].(map[string]any)["settings"].(map[string]any)
+
+	want.Equal(
+		[]string{"G115", "G101", "G118"},
+		settings["gosec"].(map[string]any)["excludes"],
+		"directive merged onto base list",
+	)
+	want.Equal([]string{"fieldalignment"}, settings["govet"].(map[string]any)["disable"])
+	want.Equal(true, settings["govet"].(map[string]any)["enable-all"], "untouched base key preserved")
+}
+
 func TestMergeTreeMapReplacesNonMapBase(t *testing.T) {
 	got := MergeTree(map[string]any{"x": "scalar"}, []Overlay{{"x": map[string]any{"deep": 1}}})
 	assert.Equal(t, map[string]any{"deep": 1}, got["x"])

@@ -34,6 +34,22 @@ func mergeMap(base, overlay map[string]any) map[string]any {
 	return out
 }
 
+// asMap coerces a decoded mapping to map[string]any, accepting both the plain type
+// (as ParseTree yields) and the named Overlay type (as yaml.v3 yields when decoding
+// the nested config: tree into map[string]Overlay) — a named map type does not
+// satisfy a plain-type assertion, so both must be handled or deep merges silently
+// degrade into wholesale replacements.
+func asMap(value any) (map[string]any, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed, true
+	case Overlay:
+		return typed, true
+	default:
+		return nil, false
+	}
+}
+
 // mergeValue folds one overlay value onto its base value: list directives mutate
 // the base list, a sub-map deep-merges, and anything else (scalar, sequence, or a
 // map replacing a non-map) replaces.
@@ -41,11 +57,11 @@ func mergeValue(base, overlay any) any {
 	if directives, ok := asDirectives(overlay); ok {
 		return directives.applyTo(toStringList(base))
 	}
-	overlayMap, isMap := overlay.(map[string]any)
+	overlayMap, isMap := asMap(overlay)
 	if !isMap {
 		return overlay
 	}
-	baseMap, ok := base.(map[string]any)
+	baseMap, ok := asMap(base)
 	if !ok {
 		return cloneMap(overlayMap)
 	}
@@ -56,7 +72,7 @@ func mergeValue(base, overlay any) any {
 // keys are all add/remove/replace, returning the list directives it encodes. Any
 // other shape (including a map with a non-directive key) is not a directive set.
 func asDirectives(overlay any) (StringList, bool) {
-	overlayMap, ok := overlay.(map[string]any)
+	overlayMap, ok := asMap(overlay)
 	if !ok || len(overlayMap) == 0 {
 		return StringList{}, false
 	}
