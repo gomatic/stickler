@@ -96,3 +96,17 @@ func TestExecCommandRunsRealProcess(t *testing.T) {
 	_, err = stickler.ExecCommand(context.Background(), "stickler-no-such-binary-xyz")
 	require.Error(t, err)
 }
+
+func TestBuildRunnersSelectsKnownAndIgnoresUnknown(t *testing.T) {
+	runners := stickler.BuildRunners(fakeCommand("", nil), []string{"yze", "nope", "golangci-lint"})
+
+	require.Len(t, runners, 2)
+	assert.Equal(t, "yze", runners[0].Name())
+	assert.Equal(t, "golangci-lint", runners[1].Name())
+}
+
+func TestBuildRunnersDefaultsToFullSet(t *testing.T) {
+	runners := stickler.BuildRunners(fakeCommand("", nil), nil)
+
+	require.Len(t, runners, 2)
+}

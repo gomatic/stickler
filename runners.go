@@ -28,6 +28,40 @@ func ExecCommand(ctx context.Context, name string, args ...string) ([]byte, erro
 	return exec.CommandContext(ctx, name, args...).Output()
 }
 
+// Runner names, used in configuration and selection.
+const (
+	RunnerYze      = "yze"
+	RunnerGolangci = "golangci-lint"
+)
+
+// BuildRunners constructs the runners named in the resolved configuration,
+// defaulting to the full set when none are configured. Unknown runner names are
+// ignored.
+func BuildRunners(command Command, names []string) []Runner {
+	if len(names) == 0 {
+		names = []string{RunnerYze, RunnerGolangci}
+	}
+	runners := make([]Runner, 0, len(names))
+	for _, name := range names {
+		if runner := newRunner(command, name); runner != nil {
+			runners = append(runners, runner)
+		}
+	}
+	return runners
+}
+
+// newRunner maps a runner name to its Runner, or nil when the name is unknown.
+func newRunner(command Command, name string) Runner {
+	switch name {
+	case RunnerYze:
+		return NewYzeRunner(command)
+	case RunnerGolangci:
+		return NewGolangciRunner(command)
+	default:
+		return nil
+	}
+}
+
 // yzeRunner runs the yze aggregator and reads its native stickler-json output —
 // no adapter, since yze emits the Diagnostic schema directly.
 type yzeRunner struct {
@@ -39,10 +73,10 @@ func NewYzeRunner(command Command) Runner {
 	return yzeRunner{command: command}
 }
 
-func (yzeRunner) Name() string { return "yze" }
+func (yzeRunner) Name() string { return RunnerYze }
 
 func (y yzeRunner) Run(ctx context.Context, root string) ([]goyze.Diagnostic, error) {
-	out, execErr := y.command(ctx, "yze", "--format", "stickler-json", root)
+	out, execErr := y.command(ctx, RunnerYze, "--format", "stickler-json", root)
 	report, parseErr := goyze.UnmarshalReport(out)
 	if parseErr != nil {
 		return nil, ErrYzeFailed.With(firstError(execErr, parseErr))
@@ -60,10 +94,10 @@ func NewGolangciRunner(command Command) Runner {
 	return golangciRunner{command: command}
 }
 
-func (golangciRunner) Name() string { return "golangci-lint" }
+func (golangciRunner) Name() string { return RunnerGolangci }
 
 func (g golangciRunner) Run(ctx context.Context, root string) ([]goyze.Diagnostic, error) {
-	out, execErr := g.command(ctx, "golangci-lint", "run", "--output.json.path=stdout", root)
+	out, execErr := g.command(ctx, RunnerGolangci, "run", "--output.json.path=stdout", root)
 	var parsed golangciOutput
 	// golangci-lint v2 appends a human summary footer after the JSON on stdout, so
 	// decode only the first JSON value and ignore any trailing text.
@@ -96,7 +130,7 @@ func adaptIssues(issues []golangciIssue) []goyze.Diagnostic {
 	diags := make([]goyze.Diagnostic, 0, len(issues))
 	for _, issue := range issues {
 		diags = append(diags, goyze.Diagnostic{
-			Tool:     "golangci-lint",
+			Tool:     RunnerGolangci,
 			Rule:     issue.FromLinter,
 			Path:     issue.Pos.Filename,
 			Line:     issue.Pos.Line,

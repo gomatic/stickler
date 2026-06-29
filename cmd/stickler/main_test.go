@@ -25,11 +25,24 @@ func (f fakeRunner) Run(context.Context, string) ([]goyze.Diagnostic, error) {
 	return f.diags, f.err
 }
 
+func swapReadFile(t *testing.T, content string, err error) {
+	t.Helper()
+	original := readFile
+	t.Cleanup(func() { readFile = original })
+	readFile = func(string) ([]byte, error) {
+		if err != nil {
+			return nil, err
+		}
+		return []byte(content), nil
+	}
+}
+
 func swapRunners(t *testing.T, runners ...stickler.Runner) {
 	t.Helper()
-	original := runnersFor
-	t.Cleanup(func() { runnersFor = original })
-	runnersFor = func() []stickler.Runner { return runners }
+	original := buildRunners
+	t.Cleanup(func() { buildRunners = original })
+	buildRunners = func([]string) []stickler.Runner { return runners }
+	swapReadFile(t, "", errs.Const("no config")) // hermetic: no config files
 }
 
 func runApp(t *testing.T, args ...string) (string, error) {
@@ -52,13 +65,13 @@ func TestActionCleanRunSucceeds(t *testing.T) {
 
 func TestActionReportsFindingsAndFails(t *testing.T) {
 	swapRunners(t, fakeRunner{diags: []goyze.Diagnostic{
-		{Path: "a.go", Line: 3, Col: 2, Severity: goyze.SeverityError, Message: "boom", Rule: "yze/go/gotostmt"},
+		{Path: "a.go", Line: 3, Col: 2, Severity: goyze.SeverityError, Message: "boom", Rule: "yze/gotostmt"},
 	}})
 
 	out, err := runApp(t, appName)
 
 	require.Error(t, err)
-	assert.Contains(t, out, "a.go:3:2: boom [error] (yze/go/gotostmt)")
+	assert.Contains(t, out, "a.go:3:2: boom [error] (yze/gotostmt)")
 }
 
 func TestActionRunnerErrorFails(t *testing.T) {
@@ -77,12 +90,49 @@ func TestActionRejectsUnknownFormat(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestDefaultRunnersAreYzeAndGolangci(t *testing.T) {
-	runners := defaultRunners()
+func TestActionUsesConfiguredRunnersAndFormat(t *testing.T) {
+	var gotNames []string
+	originalBuild := buildRunners
+	t.Cleanup(func() { buildRunners = originalBuild })
+	buildRunners = func(names []string) []stickler.Runner {
+		gotNames = names
+		return []stickler.Runner{fakeRunner{diags: []goyze.Diagnostic{{Path: "a.go", Rule: "yze/gotostmt", Message: "x"}}}}
+	}
+	swapReadFile(t, "runners: [yze]\nformat: json\n", nil)
+
+	out, err := runApp(t, appName)
+
+	require.Error(t, err) // findings -> fail
+	assert.Equal(t, []string{"yze"}, gotNames)
+	assert.Contains(t, out, `"diagnostics"`) // config format json
+}
+
+func TestActionReportsConfigError(t *testing.T) {
+	swapReadFile(t, "runners: : :\n", nil)
+
+	_, err := runApp(t, appName)
+
+	require.Error(t, err)
+}
+
+func TestDefaultBuildRunners(t *testing.T) {
+	runners := defaultBuildRunners(nil)
 
 	require.Len(t, runners, 2)
 	assert.Equal(t, "yze", runners[0].Name())
 	assert.Equal(t, "golangci-lint", runners[1].Name())
+}
+
+func TestConfigRoot(t *testing.T) {
+	assert.Equal(t, "/explicit", configRoot("/explicit", "pkg/x"))
+	assert.Equal(t, ".", configRoot("", "./..."))
+	assert.Equal(t, "pkg/x", configRoot("", "pkg/x"))
+}
+
+func TestChooseFormat(t *testing.T) {
+	assert.Equal(t, stickler.OutputFormat("github"), chooseFormat("github", "json"))
+	assert.Equal(t, stickler.OutputFormat("json"), chooseFormat("", "json"))
+	assert.Equal(t, stickler.OutputHuman, chooseFormat("", ""))
 }
 
 func TestRootOfDefaultsToModule(t *testing.T) {

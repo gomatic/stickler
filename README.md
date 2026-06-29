@@ -10,4 +10,29 @@ stickler [--format human|json|github] [root]
 - **`--format`** — `human` (default, one line per finding), `json` (the normalized result), `github` (Actions annotations). SARIF output is planned.
 - **Exit code** — `0` only when every tool ran cleanly with zero findings; non-zero on any finding or tool error.
 
-Built on the [`go-yze`](https://github.com/gomatic/go-yze) diagnostic schema. `--fix` (delegating to each tool's fixer) and a `stickler.yaml` tool configuration are planned; v1 runs `yze` + `golangci-lint` zero-config.
+## Configuration (layered merge)
+
+stickler is a runner, so its configuration is about configuring the tools it runs. Two layers merge, global first then repo:
+
+- **Global:** `$XDG_CONFIG_HOME/stickler/config.yaml` (or `~/.config/stickler/config.yaml`).
+- **Repo:** `.stickler.yaml` at the target (or `--root`).
+
+```yaml
+runners: [yze, golangci-lint]   # which tools to run
+format: human                   # default output (overridable by --format)
+analyzers:                      # per-analyzer settings (forwarded to yze)
+  ptrrecv:
+    allow: [mypkg.MyMutexType]
+```
+
+A repo layer can **replace**, **add**, or **remove** relative to the global layer. A list written as a sequence replaces; a list written as a mapping adds/removes:
+
+```yaml
+runners:
+  add: [revive]
+  remove: [golangci-lint]
+```
+
+Maps (the `analyzers` tree) deep-merge; each setting's list follows the same replace/add/remove rules. Precedence for output format is `--format` flag > config > `human`.
+
+Built on the [`go-yze`](https://github.com/gomatic/go-yze) diagnostic schema. Forwarding the merged `analyzers` settings to `yze --config`, and `--fix` (delegating to each tool's fixer), are the next steps; today stickler selects runners and output format from the merged config.

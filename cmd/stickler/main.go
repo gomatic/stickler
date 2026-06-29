@@ -21,19 +21,19 @@ const errFailed errs.Const = "lint failures found"
 // appName is the CLI name.
 const appName = "stickler"
 
-// runnersFor is indirected so tests can supply fake runners instead of spawning
-// real subprocesses.
-var runnersFor = defaultRunners
+// Indirected dependencies, so tests supply fake runners and config instead of
+// spawning real subprocesses or reading real files.
+var (
+	osExit       = os.Exit
+	getenv       = os.Getenv
+	userHomeDir  = os.UserHomeDir
+	readFile     = os.ReadFile
+	buildRunners = defaultBuildRunners
+)
 
-// osExit is indirected so tests can observe the process exit code.
-var osExit = os.Exit
-
-// defaultRunners is the zero-config tool set: the yze suite plus golangci-lint.
-func defaultRunners() []stickler.Runner {
-	return []stickler.Runner{
-		stickler.NewYzeRunner(stickler.ExecCommand),
-		stickler.NewGolangciRunner(stickler.ExecCommand),
-	}
+// defaultBuildRunners builds the configured runners over real subprocesses.
+func defaultBuildRunners(names []string) []stickler.Runner {
+	return stickler.BuildRunners(stickler.ExecCommand, names)
 }
 
 func main() { osExit(run(os.Args)) }
@@ -57,22 +57,62 @@ func createApp() *cli.Command {
 		ArgsUsage:      "[root]",
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "format", Value: string(stickler.OutputHuman), Usage: "output format (human, json, github)"},
+			&cli.StringFlag{Name: "format", Usage: "output format (human, json, github); overrides config"},
+			&cli.StringFlag{Name: "root", Usage: "directory whose .stickler.yaml is loaded (default: the target)"},
 		},
 		Action: action,
 	}
 }
 
-// action runs every tool, renders the result, and signals failure via errFailed.
+// action loads configuration, runs the configured tools, renders the result, and
+// signals failure via errFailed.
 func action(ctx context.Context, cmd *cli.Command) error {
-	result := stickler.Orchestrate(ctx, rootOf(cmd.Args().Slice()), runnersFor())
-	if err := stickler.Format(cmd.Writer, stickler.OutputFormat(cmd.String("format")), result); err != nil {
+	root := rootOf(cmd.Args().Slice())
+	resolved, err := configure(configRoot(cmd.String("root"), root))
+	if err != nil {
+		return err
+	}
+	result := stickler.Orchestrate(ctx, root, buildRunners(resolved.Runners))
+	if err := stickler.Format(cmd.Writer, chooseFormat(cmd.String("format"), resolved.Format), result); err != nil {
 		return err
 	}
 	if result.Failed() {
 		return errFailed
 	}
 	return nil
+}
+
+// configure loads and resolves the global and repo configuration layers.
+func configure(repoRoot string) (stickler.Resolved, error) {
+	home, _ := userHomeDir()
+	layers, err := stickler.LoadLayers(readFile, stickler.ConfigPaths(getenv, home, repoRoot)...)
+	if err != nil {
+		return stickler.Resolved{}, err
+	}
+	return stickler.Resolve(layers...), nil
+}
+
+// configRoot is the directory whose .stickler.yaml applies: the explicit --root,
+// else the current directory (a package pattern is not a config directory).
+func configRoot(flag, target string) string {
+	if flag != "" {
+		return flag
+	}
+	if target == "./..." {
+		return "."
+	}
+	return target
+}
+
+// chooseFormat applies the precedence flag > config > human.
+func chooseFormat(flag, configured string) stickler.OutputFormat {
+	if flag != "" {
+		return stickler.OutputFormat(flag)
+	}
+	if configured != "" {
+		return stickler.OutputFormat(configured)
+	}
+	return stickler.OutputHuman
 }
 
 // rootOf defaults to the whole module when no root is named.
