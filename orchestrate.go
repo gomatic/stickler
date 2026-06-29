@@ -6,6 +6,7 @@ package stickler
 
 import (
 	"context"
+	"slices"
 
 	errs "github.com/gomatic/go-error"
 	goyze "github.com/gomatic/go-yze"
@@ -31,10 +32,27 @@ type Result struct {
 	Errors      []error
 }
 
-// Failed reports whether the pass should fail the build: any diagnostic or any
-// runner error.
-func (r Result) Failed() bool {
-	return len(r.Diagnostics) > 0 || len(r.Errors) > 0
+// Soft is the set of soft-fail identifiers: a diagnostic whose tool (e.g. "yze")
+// or rule (e.g. "yze/ptrrecv") is listed is reported but does NOT fail the run.
+// It is the rollout ratchet — a tool starts soft and is moved to hard, whole or
+// analyzer by analyzer, as a repo cleans up.
+type Soft []string
+
+// covers reports whether a diagnostic is soft: its tool or its rule is listed.
+func (s Soft) covers(diag goyze.Diagnostic) bool {
+	return slices.Contains(s, diag.Tool) || slices.Contains(s, diag.Rule)
+}
+
+// Failed reports whether the pass should fail the build: any runner error, or any
+// HARD (not soft-listed) diagnostic. Soft diagnostics are still reported by the
+// formatter; they just do not gate.
+func (r Result) Failed(soft Soft) bool {
+	if len(r.Errors) > 0 {
+		return true
+	}
+	return slices.ContainsFunc(r.Diagnostics, func(diag goyze.Diagnostic) bool {
+		return !soft.covers(diag)
+	})
 }
 
 // Orchestrate runs every runner to completion over root, collecting all

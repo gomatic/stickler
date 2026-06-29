@@ -18,12 +18,15 @@ const (
 
 // Config is one configuration layer (global or repo). Config holds per-tool config
 // overlays keyed by runner name (the `config:` block); each is deep-merged onto
-// that tool's own base config file at run time.
+// that tool's own base config file at run time. Soft lists runner names and/or rule
+// identifiers whose findings are reported but do NOT fail the run (a soft-fail
+// ratchet: a whole tool like `yze`, or a single analyzer like `yze/ptrrecv`).
 type Config struct {
 	Analyzers map[string]map[string]StringList `yaml:"analyzers"`
 	Config    map[string]Overlay               `yaml:"config"`
 	Format    string                           `yaml:"format"`
 	Runners   StringList                       `yaml:"runners"`
+	Soft      StringList                       `yaml:"soft"`
 }
 
 // Resolved is the concrete configuration after all layers are folded. Config maps
@@ -35,6 +38,7 @@ type Resolved struct {
 	Config    map[string][]Overlay
 	Format    string
 	Runners   []string
+	Soft      []string
 }
 
 // Resolve folds the layers in order (global first, repo last), applying each
@@ -43,6 +47,7 @@ func Resolve(layers ...Config) Resolved {
 	resolved := Resolved{Analyzers: map[string]map[string][]string{}, Config: map[string][]Overlay{}}
 	for _, layer := range layers {
 		resolved.Runners = layer.Runners.applyTo(resolved.Runners)
+		resolved.Soft = layer.Soft.applyTo(resolved.Soft)
 		if layer.Format != "" {
 			resolved.Format = layer.Format
 		}

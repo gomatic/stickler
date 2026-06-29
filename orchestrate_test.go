@@ -48,7 +48,7 @@ func TestOrchestrateCollectsDiagnosticsFromEveryRunner(t *testing.T) {
 
 	assert.Len(t, result.Diagnostics, 2)
 	assert.Empty(t, result.Errors)
-	assert.True(t, result.Failed())
+	assert.True(t, result.Failed(nil))
 }
 
 func TestOrchestrateRunsAllToCompletionDespiteAnError(t *testing.T) {
@@ -62,7 +62,7 @@ func TestOrchestrateRunsAllToCompletionDespiteAnError(t *testing.T) {
 	require.Len(t, result.Errors, 1)
 	assert.True(t, errors.Is(result.Errors[0], stickler.ErrRunner))
 	assert.Len(t, result.Diagnostics, 1)
-	assert.True(t, result.Failed())
+	assert.True(t, result.Failed(nil))
 }
 
 func TestResultFailedIsFalseOnlyWhenCleanAndErrorFree(t *testing.T) {
@@ -70,7 +70,38 @@ func TestResultFailedIsFalseOnlyWhenCleanAndErrorFree(t *testing.T) {
 		fakeRunner{name: "yze"},
 	})
 
-	assert.False(t, clean.Failed())
+	assert.False(t, clean.Failed(nil))
 	assert.Empty(t, clean.Diagnostics)
 	assert.Empty(t, clean.Errors)
+}
+
+func TestResultSoftFailDoesNotGateButHardStillDoes(t *testing.T) {
+	want := assert.New(t)
+	result := stickler.Result{Diagnostics: []goyze.Diagnostic{
+		{Tool: "yze", Rule: "yze/ptrrecv"},
+		{Tool: "golangci-lint", Rule: "errcheck"},
+	}}
+
+	// soft-failing the whole yze tool still leaves the golangci finding hard.
+	want.True(result.Failed(stickler.Soft{"yze"}), "a hard golangci finding still gates")
+
+	// soft-failing every present tool makes the run pass (findings reported, not gating).
+	want.False(result.Failed(stickler.Soft{"yze", "golangci-lint"}))
+
+	// per-analyzer soft: only the named rule is soft, the golangci rule still gates.
+	want.True(result.Failed(stickler.Soft{"yze/ptrrecv"}), "the golangci rule is not softened")
+	want.False(
+		stickler.Result{
+			Diagnostics: []goyze.Diagnostic{{Tool: "yze", Rule: "yze/ptrrecv"}},
+		}.Failed(
+			stickler.Soft{"yze/ptrrecv"},
+		),
+	)
+}
+
+func TestResultSoftDoesNotMaskRunnerErrors(t *testing.T) {
+	// a runner ERROR (the tool could not run) gates regardless of soft — soft only
+	// suppresses findings, not infrastructure failures.
+	result := stickler.Result{Errors: []error{errs.Const("yze crashed")}}
+	assert.True(t, result.Failed(stickler.Soft{"yze"}))
 }

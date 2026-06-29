@@ -91,7 +91,7 @@ func action(ctx context.Context, cmd *cli.Command) error {
 	if err := stickler.Format(cmd.Writer, chooseFormat(stickler.OutputFormat(cmd.String("format")), stickler.OutputFormat(resolved.Format)), result); err != nil {
 		return err
 	}
-	if result.Failed() {
+	if result.Failed(stickler.Soft(resolved.Soft)) {
 		return errFailed
 	}
 	return nil
