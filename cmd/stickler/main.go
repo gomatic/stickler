@@ -71,7 +71,7 @@ func createApp() *cli.Command {
 		ArgsUsage:      "[root]",
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "format", Usage: "output format (human, json, github); overrides config"},
+			&cli.StringFlag{Name: "format", Usage: "output format (human, json, github, sarif); overrides config"},
 			&cli.StringFlag{Name: "root", Usage: "directory whose .stickler.yaml is loaded (default: the target)"},
 			&cli.DurationFlag{
 				Name:  "timeout",

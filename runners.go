@@ -356,7 +356,7 @@ type golangciSeverity string
 // severityOf maps a golangci-lint severity string to the normalized severity.
 func severityOf(severity golangciSeverity) goyze.Severity {
 	switch severity {
-	case "warning":
+	case levelWarning:
 		return goyze.SeverityWarning
 	case "info":
 		return goyze.SeverityInfo

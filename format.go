@@ -13,6 +13,10 @@ import (
 // ErrUnknownOutput reports an output format stickler does not support.
 const ErrUnknownOutput errs.Const = "unknown output format"
 
+// levelWarning is the "warning" severity string shared by the severity adapters and
+// the github/sarif level mappers.
+const levelWarning = "warning"
+
 // OutputFormat names how a Result is rendered.
 type OutputFormat string
 
@@ -21,6 +25,7 @@ const (
 	OutputHuman  OutputFormat = "human"
 	OutputJSON   OutputFormat = "json"
 	OutputGitHub OutputFormat = "github"
+	OutputSARIF  OutputFormat = "sarif"
 )
 
 // Format writes the result to w in the named format.
@@ -32,6 +37,8 @@ func Format(w io.Writer, format OutputFormat, result Result) error {
 		return formatJSON(w, result)
 	case OutputGitHub:
 		return formatGitHub(w, result)
+	case OutputSARIF:
+		return formatSARIF(w, result)
 	default:
 		return ErrUnknownOutput.With(nil, "format", string(format))
 	}
@@ -40,7 +47,9 @@ func Format(w io.Writer, format OutputFormat, result Result) error {
 // formatHuman writes one line per diagnostic, then one line per runner error.
 func formatHuman(w io.Writer, result Result) error {
 	for _, d := range result.Diagnostics {
-		if _, err := fmt.Fprintf(w, "%s:%d:%d: %s [%s] (%s)\n", d.Path, d.Line, d.Col, d.Message, d.Severity, d.Rule); err != nil {
+		_, err := fmt.Fprintf(w, "%s:%d:%d: %s [%s] (%s)\n",
+			d.Path, d.Line, d.Col, d.Message, d.Severity, d.Rule)
+		if err != nil {
 			return err
 		}
 	}
@@ -132,7 +141,7 @@ func escapeGitHubProperty(v ghValue) string {
 func ghLevel(severity goyze.Severity) string {
 	switch severity {
 	case goyze.SeverityWarning:
-		return "warning"
+		return levelWarning
 	case goyze.SeverityInfo:
 		return "notice"
 	default:
