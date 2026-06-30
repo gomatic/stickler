@@ -5,8 +5,10 @@
 package stickler
 
 import (
+	"cmp"
 	"context"
 	"slices"
+	"sync"
 
 	errs "github.com/gomatic/go-error"
 	goyze "github.com/gomatic/go-yze"
@@ -55,17 +57,54 @@ func (r Result) Failed(soft Soft) bool {
 	})
 }
 
-// Orchestrate runs every runner to completion over root, collecting all
-// diagnostics and wrapping any runner error with its name. One runner's failure
-// never prevents the others from running.
+// runnerResult is one runner's outcome, stored at its index so the merged output
+// is ordered by runner regardless of completion order.
+type runnerResult struct {
+	err   error
+	diags []goyze.Diagnostic
+}
+
+// Orchestrate runs every runner concurrently to completion over root, collecting
+// all diagnostics and wrapping any runner error with its name. One runner's failure
+// never prevents the others from running, and the merged result is deterministic:
+// diagnostics are grouped by runner order then sorted within the pass.
 func Orchestrate(ctx context.Context, root Root, runners []Runner) Result {
+	results := make([]runnerResult, len(runners))
+	var wg sync.WaitGroup
+	for i, runner := range runners {
+		wg.Go(func() {
+			diags, err := runner.Run(ctx, root)
+			if err != nil {
+				err = ErrRunner.With(err, "runner", runner.Name())
+			}
+			results[i] = runnerResult{diags: diags, err: err}
+		})
+	}
+	wg.Wait()
+	return collect(results)
+}
+
+// collect folds the per-runner results into one Result in runner order, then sorts
+// the diagnostics so the report does not depend on goroutine scheduling.
+func collect(results []runnerResult) Result {
 	result := Result{}
-	for _, runner := range runners {
-		diags, err := runner.Run(ctx, root)
-		result.Diagnostics = append(result.Diagnostics, diags...)
-		if err != nil {
-			result.Errors = append(result.Errors, ErrRunner.With(err, "runner", runner.Name()))
+	for _, r := range results {
+		result.Diagnostics = append(result.Diagnostics, r.diags...)
+		if r.err != nil {
+			result.Errors = append(result.Errors, r.err)
 		}
 	}
+	slices.SortStableFunc(result.Diagnostics, compareDiagnostics)
 	return result
+}
+
+// compareDiagnostics orders diagnostics by path, line, column, then rule, giving a
+// stable, tool-independent report order.
+func compareDiagnostics(a, b goyze.Diagnostic) int {
+	return cmp.Or(
+		cmp.Compare(a.Path, b.Path),
+		cmp.Compare(a.Line, b.Line),
+		cmp.Compare(a.Col, b.Col),
+		cmp.Compare(a.Rule, b.Rule),
+	)
 }

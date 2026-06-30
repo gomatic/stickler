@@ -28,9 +28,19 @@ func capturingCommand(out string, err error, gotArgs *[]stickler.Arg) stickler.C
 	}
 }
 
-func TestYzeRunnerParsesSticklerJSON(t *testing.T) {
-	out := `{"diagnostics":[{"tool":"yze","rule":"yze/gotostmt","path":"a.go","line":3,"col":2,"severity":"error","message":"goto is not permitted"}]}`
-	runner := stickler.NewYzeRunner(fakeCommand(out, nil))
+// runnerByName builds the single named runner from the default specs over command,
+// with no config overlays (config-file wiring is covered white-box in configmerge_test).
+func runnerByName(t *testing.T, command stickler.Command, name string) stickler.Runner {
+	t.Helper()
+	runners := stickler.BuildRunners(command, stickler.DefaultRunnerSpecs(), []string{name}, stickler.RunnerContext{})
+	require.Len(t, runners, 1)
+	return runners[0]
+}
+
+func TestYzeSpecParsesSticklerJSON(t *testing.T) {
+	out := `{"diagnostics":[{"tool":"yze","rule":"yze/gotostmt","path":"a.go",` +
+		`"line":3,"col":2,"severity":"error","message":"goto is not permitted"}]}`
+	runner := runnerByName(t, fakeCommand(out, nil), "yze")
 
 	assert.Equal(t, "yze", runner.Name())
 	diags, err := runner.Run(context.Background(), ".")
@@ -39,30 +49,30 @@ func TestYzeRunnerParsesSticklerJSON(t *testing.T) {
 	assert.Equal(t, "yze/gotostmt", diags[0].Rule)
 }
 
-func TestYzeRunnerReportsExecFailureWhenOutputUnparseable(t *testing.T) {
-	runner := stickler.NewYzeRunner(fakeCommand("", errs.Const("exec boom")))
+func TestYzeSpecReportsExecFailureWhenOutputUnparseable(t *testing.T) {
+	runner := runnerByName(t, fakeCommand("", errs.Const("exec boom")), "yze")
 
 	_, err := runner.Run(context.Background(), ".")
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, stickler.ErrYzeFailed))
+	assert.True(t, errors.Is(err, stickler.ErrRunnerFailed))
 }
 
-func TestYzeRunnerReportsParseFailureWithoutExecError(t *testing.T) {
-	runner := stickler.NewYzeRunner(fakeCommand("{ not json", nil))
+func TestYzeSpecReportsParseFailureWithoutExecError(t *testing.T) {
+	runner := runnerByName(t, fakeCommand("{ not json", nil), "yze")
 
 	_, err := runner.Run(context.Background(), ".")
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, stickler.ErrYzeFailed))
+	assert.True(t, errors.Is(err, stickler.ErrRunnerFailed))
 }
 
-func TestGolangciRunnerAdaptsIssues(t *testing.T) {
+func TestGolangciSpecAdaptsIssues(t *testing.T) {
 	out := `{"Issues":[
 		{"FromLinter":"errcheck","Text":"unchecked error","Severity":"error","Pos":{"Filename":"a.go","Line":10,"Column":3}},
 		{"FromLinter":"gosec","Text":"weak rand","Severity":"warning","Pos":{"Filename":"b.go","Line":4,"Column":1}}
 	]}`
-	runner := stickler.NewGolangciRunner(fakeCommand(out, errors.New("exit status 1")), stickler.ConfigMerger{})
+	runner := runnerByName(t, fakeCommand(out, errors.New("exit status 1")), "golangci-lint")
 
 	assert.Equal(t, "golangci-lint", runner.Name())
 	diags, err := runner.Run(context.Background(), ".")
@@ -75,12 +85,12 @@ func TestGolangciRunnerAdaptsIssues(t *testing.T) {
 	assert.Equal(t, "b.go", diags[1].Path)
 }
 
-func TestGolangciRunnerMapsInfoAndDefaultSeverity(t *testing.T) {
+func TestGolangciSpecMapsInfoAndDefaultSeverity(t *testing.T) {
 	out := `{"Issues":[
 		{"FromLinter":"a","Text":"x","Severity":"info","Pos":{"Filename":"a.go","Line":1,"Column":1}},
 		{"FromLinter":"b","Text":"y","Severity":"","Pos":{"Filename":"a.go","Line":1,"Column":1}}
 	]}`
-	diags, err := stickler.NewGolangciRunner(fakeCommand(out, nil), stickler.ConfigMerger{}).
+	diags, err := runnerByName(t, fakeCommand(out, nil), "golangci-lint").
 		Run(context.Background(), ".")
 
 	require.NoError(t, err)
@@ -88,92 +98,100 @@ func TestGolangciRunnerMapsInfoAndDefaultSeverity(t *testing.T) {
 	assert.Equal(t, goyze.SeverityError, diags[1].Severity)
 }
 
-func TestYzeRunnerCleanPassWithZeroExit(t *testing.T) {
-	diags, err := stickler.NewYzeRunner(fakeCommand(`{"diagnostics":[]}`, nil)).Run(context.Background(), ".")
+func TestYzeSpecCleanPassWithZeroExit(t *testing.T) {
+	diags, err := runnerByName(t, fakeCommand(`{"diagnostics":[]}`, nil), "yze").
+		Run(context.Background(), ".")
 
 	require.NoError(t, err)
 	assert.Empty(t, diags)
 }
 
-func TestYzeRunnerReturnsFindingsDespiteNonZeroExit(t *testing.T) {
-	out := `{"diagnostics":[{"tool":"yze","rule":"yze/gotostmt","path":"a.go","line":3,"col":2,"severity":"error","message":"goto"}]}`
-	diags, err := stickler.NewYzeRunner(fakeCommand(out, errors.New("exit status 1"))).Run(context.Background(), ".")
+func TestYzeSpecReturnsFindingsDespiteNonZeroExit(t *testing.T) {
+	out := `{"diagnostics":[{"tool":"yze","rule":"yze/gotostmt","path":"a.go",` +
+		`"line":3,"col":2,"severity":"error","message":"goto"}]}`
+	runner := runnerByName(t, fakeCommand(out, errors.New("exit status 1")), "yze")
+	diags, err := runner.Run(context.Background(), ".")
 
 	require.NoError(t, err)
 	require.Len(t, diags, 1)
 	assert.Equal(t, "yze/gotostmt", diags[0].Rule)
 }
 
-func TestYzeRunnerSurfacesToolFailureWhenExitNonZeroAndNoFindings(t *testing.T) {
-	// Valid-but-empty JSON with a non-zero exit means the tool failed for a
-	// non-finding reason; it must not be reported as a clean pass.
-	_, err := stickler.NewYzeRunner(fakeCommand(`{"diagnostics":[]}`, errs.Const("config boom"))).
-		Run(context.Background(), ".")
+func TestYzeSpecSurfacesToolFailureWhenExitNonZeroAndNoFindings(t *testing.T) {
+	command := fakeCommand(`{"diagnostics":[]}`, errs.Const("config boom"))
+	_, err := runnerByName(t, command, "yze").Run(context.Background(), ".")
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, stickler.ErrYzeFailed))
+	assert.True(t, errors.Is(err, stickler.ErrRunnerFailed))
 }
 
-func TestYzeRunnerInsertsDoubleDashBeforeRoot(t *testing.T) {
+func TestYzeSpecSubstitutesRootAfterDoubleDash(t *testing.T) {
 	var got []stickler.Arg
-	_, err := stickler.NewYzeRunner(capturingCommand(`{"diagnostics":[]}`, nil, &got)).Run(context.Background(), "-x")
+	_, err := runnerByName(t, capturingCommand(`{"diagnostics":[]}`, nil, &got), "yze").
+		Run(context.Background(), "-x")
 
 	require.NoError(t, err)
 	assert.Equal(t, []stickler.Arg{"--format", "stickler-json", "--", "-x"}, got)
 }
 
-func TestGolangciRunnerCleanPassWithEmptyIssues(t *testing.T) {
-	diags, err := stickler.NewGolangciRunner(fakeCommand(`{"Issues":[],"Report":{}}`, nil), stickler.ConfigMerger{}).
+func TestGolangciSpecCleanPassWithEmptyIssues(t *testing.T) {
+	command := fakeCommand(`{"Issues":[],"Report":{}}`, nil)
+	diags, err := runnerByName(t, command, "golangci-lint").Run(context.Background(), ".")
+
+	require.NoError(t, err)
+	assert.Empty(t, diags)
+}
+
+func TestGolangciSpecEmptyStdoutOnCleanRunIsNotAFailure(t *testing.T) {
+	diags, err := runnerByName(t, fakeCommand("", nil), "golangci-lint").
 		Run(context.Background(), ".")
 
 	require.NoError(t, err)
 	assert.Empty(t, diags)
 }
 
-func TestGolangciRunnerEmptyStdoutOnCleanRunIsNotAFailure(t *testing.T) {
-	// Empty stdout with a zero exit is a clean, no-findings run (io.EOF on decode).
-	diags, err := stickler.NewGolangciRunner(fakeCommand("", nil), stickler.ConfigMerger{}).
-		Run(context.Background(), ".")
-
-	require.NoError(t, err)
-	assert.Empty(t, diags)
-}
-
-func TestGolangciRunnerSurfacesToolFailureWhenExitNonZeroAndNoIssues(t *testing.T) {
-	// A config error: empty stdout, non-zero exit. Must surface, not pass clean.
-	_, err := stickler.NewGolangciRunner(fakeCommand("", errs.Const("invalid config")), stickler.ConfigMerger{}).
+func TestGolangciSpecSurfacesToolFailureWhenExitNonZeroAndNoIssues(t *testing.T) {
+	_, err := runnerByName(t, fakeCommand("", errs.Const("invalid config")), "golangci-lint").
 		Run(context.Background(), ".")
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, stickler.ErrGolangciFailed))
+	assert.True(t, errors.Is(err, stickler.ErrRunnerFailed))
 }
 
-func TestGolangciRunnerSurfacesTopLevelReportError(t *testing.T) {
+func TestGolangciSpecReportsParseFailureOnMalformedJSON(t *testing.T) {
+	// Non-empty, non-JSON stdout is a real decode error (not the clean io.EOF path).
+	_, err := runnerByName(t, fakeCommand("nope", nil), "golangci-lint").Run(context.Background(), ".")
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, stickler.ErrRunnerFailed))
+}
+
+func TestGolangciSpecSurfacesTopLevelReportError(t *testing.T) {
 	out := `{"Issues":[],"Report":{"Error":"linter X panicked"}}`
-	_, err := stickler.NewGolangciRunner(fakeCommand(out, nil), stickler.ConfigMerger{}).Run(context.Background(), ".")
+	_, err := runnerByName(t, fakeCommand(out, nil), "golangci-lint").
+		Run(context.Background(), ".")
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, stickler.ErrGolangciFailed))
+	assert.True(t, errors.Is(err, stickler.ErrRunnerFailed))
 	assert.Contains(t, err.Error(), "linter X panicked")
 }
 
-func TestGolangciRunnerToleratesTrailingSummaryFooter(t *testing.T) {
-	// golangci-lint v2 appends a human summary after the JSON; the streaming decoder
-	// (not json.Unmarshal, which rejects trailing data) reads the first value only.
-	out := `{"Issues":[{"FromLinter":"errcheck","Text":"x","Severity":"error","Pos":{"Filename":"a.go","Line":1,"Column":1}}]}` +
+func TestGolangciSpecToleratesTrailingSummaryFooter(t *testing.T) {
+	out := `{"Issues":[{"FromLinter":"errcheck","Text":"x","Severity":"error",` +
+		`"Pos":{"Filename":"a.go","Line":1,"Column":1}}]}` +
 		"\n1 issues:\n* errcheck: 1\n"
-	diags, err := stickler.NewGolangciRunner(fakeCommand(out, errors.New("exit status 1")), stickler.ConfigMerger{}).
-		Run(context.Background(), ".")
+	command := fakeCommand(out, errors.New("exit status 1"))
+	diags, err := runnerByName(t, command, "golangci-lint").Run(context.Background(), ".")
 
 	require.NoError(t, err)
 	require.Len(t, diags, 1)
 	assert.Equal(t, "errcheck", diags[0].Rule)
 }
 
-func TestGolangciRunnerInsertsDoubleDashBeforeRoot(t *testing.T) {
+func TestGolangciSpecSubstitutesRootAndDropsConfigWhenNoOverlay(t *testing.T) {
 	var got []stickler.Arg
-	_, err := stickler.NewGolangciRunner(capturingCommand(`{"Issues":[],"Report":{}}`, nil, &got), stickler.ConfigMerger{}).
-		Run(context.Background(), "-x")
+	command := capturingCommand(`{"Issues":[],"Report":{}}`, nil, &got)
+	_, err := runnerByName(t, command, "golangci-lint").Run(context.Background(), "-x")
 
 	require.NoError(t, err)
 	assert.Equal(t, []stickler.Arg{"run", "--output.json.path=stdout", "--", "-x"}, got)
@@ -185,20 +203,6 @@ func TestExecCommandSurfacesStderrInError(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, stickler.ErrExec))
 	assert.Contains(t, err.Error(), "the real reason")
-}
-
-func TestGolangciRunnerReportsExecFailureWhenUnparseable(t *testing.T) {
-	_, err := stickler.NewGolangciRunner(fakeCommand("", errs.Const("boom")), stickler.ConfigMerger{}).
-		Run(context.Background(), ".")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, stickler.ErrGolangciFailed))
-}
-
-func TestGolangciRunnerReportsParseFailureWithoutExecError(t *testing.T) {
-	_, err := stickler.NewGolangciRunner(fakeCommand("nope", nil), stickler.ConfigMerger{}).
-		Run(context.Background(), ".")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, stickler.ErrGolangciFailed))
 }
 
 func TestExecCommandRunsRealProcess(t *testing.T) {
@@ -213,6 +217,7 @@ func TestExecCommandRunsRealProcess(t *testing.T) {
 func TestBuildRunnersSelectsKnownAndIgnoresUnknown(t *testing.T) {
 	runners := stickler.BuildRunners(
 		fakeCommand("", nil),
+		stickler.DefaultRunnerSpecs(),
 		[]string{"yze", "nope", "golangci-lint"},
 		stickler.RunnerContext{},
 	)
@@ -222,8 +227,33 @@ func TestBuildRunnersSelectsKnownAndIgnoresUnknown(t *testing.T) {
 	assert.Equal(t, "golangci-lint", runners[1].Name())
 }
 
-func TestBuildRunnersDefaultsToFullSet(t *testing.T) {
-	runners := stickler.BuildRunners(fakeCommand("", nil), nil, stickler.RunnerContext{})
+func TestBuildRunnersDefaultsToEveryDefinedSpecSorted(t *testing.T) {
+	runners := stickler.BuildRunners(fakeCommand("", nil), stickler.DefaultRunnerSpecs(), nil, stickler.RunnerContext{})
 
 	require.Len(t, runners, 2)
+	assert.Equal(t, "golangci-lint", runners[0].Name())
+	assert.Equal(t, "yze", runners[1].Name())
+}
+
+func TestBuildRunnersSkipsSpecWithUnknownParser(t *testing.T) {
+	specs := stickler.MergeSpecs(stickler.DefaultRunnerSpecs(), map[string]stickler.RunnerSpec{
+		"custom": {Name: "custom", Command: []string{"custom"}, Format: "no-such-parser"},
+	})
+	runners := stickler.BuildRunners(fakeCommand("", nil), specs, []string{"custom", "yze"}, stickler.RunnerContext{})
+
+	require.Len(t, runners, 1)
+	assert.Equal(t, "yze", runners[0].Name())
+}
+
+func TestMergeSpecsOverridesDefaultAndAddsNew(t *testing.T) {
+	defined := map[string]stickler.RunnerSpec{
+		"yze":   {Name: "yze", Command: []string{"yze2"}, Format: stickler.ParserSticklerJSON},
+		"extra": {Name: "extra", Command: []string{"extra"}, Format: stickler.ParserSticklerJSON},
+	}
+	merged := stickler.MergeSpecs(stickler.DefaultRunnerSpecs(), defined)
+
+	require.Len(t, merged, 3)
+	assert.Equal(t, []string{"yze2"}, merged["yze"].Command)
+	assert.Equal(t, "extra", merged["extra"].Name)
+	assert.Equal(t, []string{"golangci-lint", "run"}, merged["golangci-lint"].Command)
 }

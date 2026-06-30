@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	errs "github.com/gomatic/go-error"
@@ -16,17 +17,16 @@ import (
 
 // Runner failures.
 const (
-	// ErrYzeFailed reports that the yze aggregator could not be run or parsed.
-	ErrYzeFailed errs.Const = "yze runner failed"
-	// ErrGolangciFailed reports that golangci-lint could not be run or parsed.
-	ErrGolangciFailed errs.Const = "golangci-lint runner failed"
-	// ErrExec reports that a subprocess could not be started or exited non-zero;
-	// it carries the captured stderr so the failure's real reason is reported.
+	// ErrRunnerFailed reports that a runner could not be run, its config could not
+	// be built, or its output could not be parsed — distinct from a clean pass that
+	// merely reported findings.
+	ErrRunnerFailed errs.Const = "runner failed"
+	// ErrExec reports that a subprocess could not be started or exited non-zero; it
+	// carries the captured stderr so the failure's real reason is reported.
 	ErrExec errs.Const = "command execution failed"
 )
 
-// RunnerName identifies a runner in configuration, selection, and as the binary
-// name stickler executes.
+// RunnerName identifies a runner's binary (the first word of its command).
 type RunnerName string
 
 // Arg is one command-line argument passed to a runner's binary.
@@ -61,19 +61,87 @@ func stringArgs(args []Arg) []string {
 	return out
 }
 
-// Runner names, used in configuration and selection.
+// Argument placeholders substituted in a RunnerSpec's Args at run time.
 const (
-	RunnerYze      RunnerName = "yze"
-	RunnerGolangci RunnerName = "golangci-lint"
+	placeholderRoot   = "{root}"
+	placeholderConfig = "{config}"
 )
 
-// golangci-lint invocation literals.
+// ParserName selects the output parser a runner's stdout is read with.
+type ParserName string
+
+// Built-in parser names.
 const (
-	golangciRunVerb    = "run"
-	golangciConfigFlag = "--config="
-	golangciConfigYAML = ".golangci.yaml"
-	golangciConfigYML  = ".golangci.yml"
+	ParserSticklerJSON ParserName = "stickler-json"
+	ParserGolangciJSON ParserName = "golangci-json"
 )
+
+// Built-in tool literals (named so the spec table and adapters share one source).
+const (
+	toolYze          = "yze"
+	toolGolangci     = "golangci-lint"
+	golangciRunVerb  = "run"
+	golangciJSONFlag = "--output.json.path=stdout"
+	golangciCfgFlag  = "--config={path}"
+	golangciBaseYAML = ".golangci.yaml"
+	golangciBaseYML  = ".golangci.yml"
+)
+
+// ConfigSpec declares, as data, how a tool takes its configuration file: the base
+// config filename candidates (first found wins) the stickler overlays are merged
+// onto, and the flag template (`{path}` substituted) that passes the effective
+// config. It carries no tool-specific behavior — the merge is generic.
+type ConfigSpec struct {
+	Flag string
+	Base []string
+}
+
+// RunnerSpec is the declarative definition of a tool stickler runs: its command,
+// its argument template (with `{root}`/`{config}` placeholders), the parser its
+// stdout is read with, and optionally how its config file is wired. A tool is data
+// here, not code — adding one is configuration, not a recompile.
+// Fields are ordered for struct-field alignment (slices last); the YAML schema is
+// unaffected since decoding is by tag.
+type RunnerSpec struct {
+	Name    string      `yaml:"name"`
+	Format  ParserName  `yaml:"format"`
+	Config  *ConfigSpec `yaml:"config"`
+	Command []string    `yaml:"command"`
+	Args    []string    `yaml:"args"`
+}
+
+// Parser turns a tool's stdout into normalized diagnostics. A non-nil error means
+// the tool self-reported a fatal problem (bad config, internal error). This is the
+// only per-tool code in the runner layer.
+type Parser func(out []byte) ([]goyze.Diagnostic, error)
+
+// defaultParsers is the registry of output parsers selected by a spec's Format.
+var defaultParsers = map[ParserName]Parser{
+	ParserSticklerJSON: parseSticklerJSON,
+	ParserGolangciJSON: parseGolangciJSON,
+}
+
+// DefaultRunnerSpecs is the built-in tool set as pure data: yze (native
+// stickler-json, no config file) and golangci-lint (adapted JSON, config merged
+// from the repo's .golangci.yaml). A .stickler.yaml `define:` block overrides or
+// extends this map without touching Go.
+func DefaultRunnerSpecs() map[string]RunnerSpec {
+	return map[string]RunnerSpec{
+		toolYze: {
+			Name:    toolYze,
+			Command: []string{toolYze},
+			Args:    []string{"--format", string(ParserSticklerJSON), "--", placeholderRoot},
+			Format:  ParserSticklerJSON,
+		},
+		toolGolangci: {
+			Name:    toolGolangci,
+			Command: []string{toolGolangci, golangciRunVerb},
+			Args:    []string{golangciJSONFlag, placeholderConfig, "--", placeholderRoot},
+			Format:  ParserGolangciJSON,
+			Config:  &ConfigSpec{Base: []string{golangciBaseYAML, golangciBaseYML}, Flag: golangciCfgFlag},
+		},
+	}
+}
 
 // RunnerContext carries what config-file runners need to build their effective
 // configuration: the repo directory holding the base config files and the resolved
@@ -83,126 +151,144 @@ type RunnerContext struct {
 	BaseDir string
 }
 
-// BuildRunners constructs the runners named in the resolved configuration,
-// defaulting to the full set when none are configured. A config-file runner is
-// given its merger so it runs against the effective (base + overlay) config.
-// Unknown runner names are ignored.
-func BuildRunners(command Command, names []string, ctx RunnerContext) []Runner {
+// BuildRunners resolves the named runners against the spec registry (built-in
+// defaults overlaid with any config-defined specs) into generic runners. Names
+// default to every defined spec. An unknown name, or a spec naming an unknown
+// parser, is skipped.
+func BuildRunners(command Command, specs map[string]RunnerSpec, names []string, ctx RunnerContext) []Runner {
 	if len(names) == 0 {
-		names = []string{string(RunnerYze), string(RunnerGolangci)}
+		names = sortedKeys(specs)
 	}
 	runners := make([]Runner, 0, len(names))
 	for _, name := range names {
-		if runner := newRunner(command, RunnerName(name), ctx); runner != nil {
+		if runner, ok := newSpecRunner(command, specs[name], name, ctx); ok {
 			runners = append(runners, runner)
 		}
 	}
 	return runners
 }
 
-// newRunner maps a runner name to its Runner, or nil when the name is unknown.
-func newRunner(command Command, name RunnerName, ctx RunnerContext) Runner {
-	switch name {
-	case RunnerYze:
-		return NewYzeRunner(command)
-	case RunnerGolangci:
-		return NewGolangciRunner(command, GolangciMerger(ctx.Config[string(RunnerGolangci)], ctx.BaseDir))
-	default:
-		return nil
+// newSpecRunner builds a generic runner for one spec, returning false when the spec
+// is undefined (empty name) or names a parser with no registered handler.
+func newSpecRunner(command Command, spec RunnerSpec, name string, ctx RunnerContext) (Runner, bool) {
+	parser, ok := defaultParsers[spec.Format]
+	if spec.Name == "" || !ok {
+		return nil, false
 	}
+	return specRunner{spec: spec, command: command, parser: parser, merger: specMerger(spec, ctx, name)}, true
 }
 
-// GolangciMerger builds the generic config merger for golangci-lint — the only
-// golangci-specific knowledge is its base config filenames and --config flag —
-// wired to the production I/O seams.
-func GolangciMerger(overlays []Overlay, baseDir string) ConfigMerger {
+// specMerger builds the generic config merger for a spec that takes a config file,
+// or the zero merger (no-op Args) when the spec carries no ConfigSpec.
+func specMerger(spec RunnerSpec, ctx RunnerContext, name string) ConfigMerger {
+	if spec.Config == nil {
+		return ConfigMerger{}
+	}
 	return ConfigMerger{
-		BaseNames: []string{golangciConfigYAML, golangciConfigYML},
-		Flag:      golangciConfigFlag,
-		Overlays:  overlays,
-		BaseDir:   baseDir,
+		BaseNames: spec.Config.Base,
+		Flag:      spec.Config.Flag,
+		Overlays:  ctx.Config[name],
+		BaseDir:   ctx.BaseDir,
 		Read:      os.ReadFile,
 		Temp:      OSTempWriter,
 	}
 }
 
-// yzeRunner runs the yze aggregator and reads its native stickler-json output —
-// no adapter, since yze emits the Diagnostic schema directly.
-type yzeRunner struct {
+// specRunner is the single, tool-agnostic Runner: it merges the effective config,
+// substitutes the argument placeholders, executes the command, and reads the
+// output through the spec's parser, applying the uniform findings-vs-failure rule.
+type specRunner struct {
 	command Command
-}
-
-// NewYzeRunner builds a Runner that invokes the yze aggregator.
-func NewYzeRunner(command Command) Runner {
-	return yzeRunner{command: command}
-}
-
-func (yzeRunner) Name() string { return string(RunnerYze) }
-
-// Run executes yze. A non-zero exit with parsed findings is the expected "findings
-// reported" path; a non-zero exit with zero findings means the tool itself failed
-// (config/load/typecheck error or panic) and surfaces as ErrYzeFailed rather than
-// masquerading as a clean pass.
-func (y yzeRunner) Run(ctx context.Context, root Root) ([]goyze.Diagnostic, error) {
-	out, execErr := y.command(ctx, RunnerYze, "--format", "stickler-json", "--", Arg(root))
-	report, parseErr := goyze.UnmarshalReport(out)
-	if parseErr != nil {
-		return nil, ErrYzeFailed.With(firstError(execErr, parseErr))
-	}
-	if execErr != nil && len(report.Diagnostics) == 0 {
-		return nil, ErrYzeFailed.With(execErr)
-	}
-	return report.Diagnostics, nil
-}
-
-// golangciRunner runs golangci-lint against the effective (base + overlay) config
-// and adapts its JSON issues to diagnostics. The merge itself is generic; this
-// runner only supplies golangci's adapter and (via the merger) its config spec.
-type golangciRunner struct {
-	command Command
+	parser  Parser
 	merger  ConfigMerger
+	spec    RunnerSpec
 }
 
-// NewGolangciRunner builds a Runner that invokes golangci-lint, merging the repo's
-// base .golangci.yaml with the configured overlays at run time via the merger.
-func NewGolangciRunner(command Command, merger ConfigMerger) Runner {
-	return golangciRunner{command: command, merger: merger}
-}
+func (r specRunner) Name() string { return r.spec.Name }
 
-func (golangciRunner) Name() string { return string(RunnerGolangci) }
-
-// Run executes golangci-lint against the effective config. As with yze, a non-zero
-// exit accompanied by parsed issues is the findings path; a non-zero exit (or a
-// top-level Report.Error) with zero issues is a genuine tool failure surfaced as
-// ErrGolangciFailed. A failure to build the effective config is also a tool
-// failure, since the lint pass could not run.
-func (g golangciRunner) Run(ctx context.Context, root Root) ([]goyze.Diagnostic, error) {
-	configArgs, cleanup, err := g.merger.Args()
+// Run executes the spec. A non-zero exit accompanied by parsed findings is the
+// expected "findings reported" path; a parser error, a config-build failure, or a
+// non-zero exit with zero findings is a genuine tool failure surfaced as
+// ErrRunnerFailed rather than masquerading as a clean pass.
+func (r specRunner) Run(ctx context.Context, root Root) ([]goyze.Diagnostic, error) {
+	configArgs, cleanup, err := r.merger.Args()
 	if err != nil {
-		return nil, ErrGolangciFailed.With(err)
+		return nil, ErrRunnerFailed.With(err, "runner", r.spec.Name)
 	}
 	defer cleanup()
-	out, execErr := g.command(ctx, RunnerGolangci, golangciArgs(configArgs, root)...)
-	parsed, parseErr := decodeGolangci(out)
+	name, args := r.argv(root, configArgs)
+	out, execErr := r.command(ctx, name, args...)
+	diags, parseErr := r.parser(out)
 	if parseErr != nil {
-		return nil, ErrGolangciFailed.With(firstError(execErr, parseErr))
-	}
-	diags := adaptIssues(parsed.Issues)
-	if parsed.Report.Error != "" {
-		return nil, ErrGolangciFailed.With(execErr, "report", parsed.Report.Error)
+		return nil, ErrRunnerFailed.With(firstError(execErr, parseErr), "runner", r.spec.Name)
 	}
 	if execErr != nil && len(diags) == 0 {
-		return nil, ErrGolangciFailed.With(execErr)
+		return nil, ErrRunnerFailed.With(execErr, "runner", r.spec.Name)
 	}
 	return diags, nil
 }
 
-// golangciArgs assembles the golangci-lint argv: the run verb and JSON output,
-// then any --config flag for the effective config, then the root after "--".
-func golangciArgs(configArgs []Arg, root Root) []Arg {
-	args := []Arg{golangciRunVerb, "--output.json.path=stdout"}
-	args = append(args, configArgs...)
-	return append(args, "--", Arg(root))
+// argv builds the executed command: the binary (Command[0]), the fixed command
+// verbs (Command[1:]), then the Args with `{config}` expanded to the merged config
+// argument(s) and `{root}` substituted with the target.
+func (r specRunner) argv(root Root, configArgs []Arg) (RunnerName, []Arg) {
+	args := toArgs(r.spec.Command[1:])
+	for _, raw := range r.spec.Args {
+		args = append(args, substituteArg(raw, root, configArgs)...)
+	}
+	return RunnerName(r.spec.Command[0]), args
+}
+
+// substituteArg expands one templated argument: `{config}` becomes the merged
+// config argument(s) (dropped when there are none), and `{root}` is replaced inline.
+func substituteArg(raw string, root Root, configArgs []Arg) []Arg {
+	if raw == placeholderConfig {
+		return configArgs
+	}
+	return []Arg{Arg(strings.ReplaceAll(raw, placeholderRoot, string(root)))}
+}
+
+// toArgs converts a string slice to typed Args.
+func toArgs(in []string) []Arg {
+	out := make([]Arg, len(in))
+	for i, s := range in {
+		out[i] = Arg(s)
+	}
+	return out
+}
+
+// sortedKeys returns the spec names in deterministic order, so the default runner
+// set (and thus output) does not depend on map iteration order.
+func sortedKeys(specs map[string]RunnerSpec) []string {
+	names := make([]string, 0, len(specs))
+	for name := range specs {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// parseSticklerJSON reads yze's native stickler-json Diagnostic report.
+func parseSticklerJSON(out []byte) ([]goyze.Diagnostic, error) {
+	report, err := goyze.UnmarshalReport(out)
+	if err != nil {
+		return nil, err
+	}
+	return report.Diagnostics, nil
+}
+
+// parseGolangciJSON decodes golangci-lint's JSON, adapting its issues to
+// diagnostics and surfacing a top-level run error (e.g. invalid config) as a
+// fatal parser error.
+func parseGolangciJSON(out []byte) ([]goyze.Diagnostic, error) {
+	parsed, err := decodeGolangci(out)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Report.Error != "" {
+		return nil, ErrRunnerFailed.With(nil, "report", parsed.Report.Error)
+	}
+	return adaptIssues(parsed.Issues), nil
 }
 
 // decodeGolangci reads the first JSON value from golangci-lint's stdout, tolerating
@@ -251,7 +337,7 @@ func adaptIssues(issues []golangciIssue) []goyze.Diagnostic {
 	diags := make([]goyze.Diagnostic, 0, len(issues))
 	for _, issue := range issues {
 		diags = append(diags, goyze.Diagnostic{
-			Tool:     string(RunnerGolangci),
+			Tool:     toolGolangci,
 			Rule:     issue.FromLinter,
 			Path:     issue.Pos.Filename,
 			Line:     issue.Pos.Line,

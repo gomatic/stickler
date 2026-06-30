@@ -1,6 +1,7 @@
 package stickler
 
 import (
+	"maps"
 	"path/filepath"
 
 	errs "github.com/gomatic/go-error"
@@ -24,6 +25,7 @@ const (
 type Config struct {
 	Analyzers map[string]map[string]StringList `yaml:"analyzers"`
 	Config    map[string]Overlay               `yaml:"config"`
+	Define    map[string]RunnerSpec            `yaml:"define"`
 	Format    string                           `yaml:"format"`
 	Runners   StringList                       `yaml:"runners"`
 	Soft      StringList                       `yaml:"soft"`
@@ -36,6 +38,7 @@ type Config struct {
 type Resolved struct {
 	Analyzers map[string]map[string][]string
 	Config    map[string][]Overlay
+	Define    map[string]RunnerSpec
 	Format    string
 	Runners   []string
 	Soft      []string
@@ -44,7 +47,11 @@ type Resolved struct {
 // Resolve folds the layers in order (global first, repo last), applying each
 // layer's add/remove/replace directives onto the accumulated result.
 func Resolve(layers ...Config) Resolved {
-	resolved := Resolved{Analyzers: map[string]map[string][]string{}, Config: map[string][]Overlay{}}
+	resolved := Resolved{
+		Analyzers: map[string]map[string][]string{},
+		Config:    map[string][]Overlay{},
+		Define:    map[string]RunnerSpec{},
+	}
 	for _, layer := range layers {
 		resolved.Runners = layer.Runners.applyTo(resolved.Runners)
 		resolved.Soft = layer.Soft.applyTo(resolved.Soft)
@@ -53,8 +60,26 @@ func Resolve(layers ...Config) Resolved {
 		}
 		mergeAnalyzers(resolved.Analyzers, layer.Analyzers)
 		appendConfigOverlays(resolved.Config, layer.Config)
+		mergeDefines(resolved.Define, layer.Define)
 	}
 	return resolved
+}
+
+// mergeDefines folds a layer's runner-spec definitions onto the accumulator; a
+// later layer's spec for a name replaces an earlier one (whole-spec override).
+func mergeDefines(acc, layer map[string]RunnerSpec) {
+	maps.Copy(acc, layer)
+}
+
+// MergeSpecs overlays config-defined runner specs onto the built-in defaults,
+// returning a new map; a defined spec replaces the default of the same name. This
+// is what lets a .stickler.yaml `define:` block add or override a tool without a
+// recompile.
+func MergeSpecs(defaults, defined map[string]RunnerSpec) map[string]RunnerSpec {
+	merged := make(map[string]RunnerSpec, len(defaults)+len(defined))
+	maps.Copy(merged, defaults)
+	maps.Copy(merged, defined)
+	return merged
 }
 
 // appendConfigOverlays appends each tool's overlay from one layer onto that tool's

@@ -43,8 +43,10 @@ var (
 
 // defaultBuildRunners builds the configured runners over real subprocesses, giving
 // each config-file runner the context it needs to merge its effective config.
-func defaultBuildRunners(names []string, ctx stickler.RunnerContext) []stickler.Runner {
-	return stickler.BuildRunners(stickler.ExecCommand, names, ctx)
+func defaultBuildRunners(
+	specs map[string]stickler.RunnerSpec, names []string, ctx stickler.RunnerContext,
+) []stickler.Runner {
+	return stickler.BuildRunners(stickler.ExecCommand, specs, names, ctx)
 }
 
 func main() { osExit(run(os.Args)) }
@@ -93,8 +95,10 @@ func action(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	runnerCtx := stickler.RunnerContext{BaseDir: string(repoRoot), Config: resolved.Config}
-	result := stickler.Orchestrate(ctx, root, buildRunners(resolved.Runners, runnerCtx))
-	if err := stickler.Format(cmd.Writer, chooseFormat(stickler.OutputFormat(cmd.String("format")), stickler.OutputFormat(resolved.Format)), result); err != nil {
+	specs := stickler.MergeSpecs(stickler.DefaultRunnerSpecs(), resolved.Define)
+	result := stickler.Orchestrate(ctx, root, buildRunners(specs, resolved.Runners, runnerCtx))
+	format := chooseFormat(stickler.OutputFormat(cmd.String("format")), stickler.OutputFormat(resolved.Format))
+	if err := stickler.Format(cmd.Writer, format, result); err != nil {
 		return err
 	}
 	if result.Failed(stickler.Soft(resolved.Soft)) {

@@ -3,6 +3,7 @@ package stickler
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -202,8 +203,12 @@ func (m ConfigMerger) Args() ([]Arg, func(), error) {
 	if err != nil {
 		return nil, func() {}, err
 	}
-	return []Arg{Arg(m.Flag + path)}, cleanup, nil
+	return []Arg{Arg(strings.ReplaceAll(m.Flag, configPathPlaceholder, path))}, cleanup, nil
 }
+
+// configPathPlaceholder is substituted with the effective config file's path in a
+// ConfigSpec's Flag template (e.g. "--config={path}").
+const configPathPlaceholder = "{path}"
 
 // osTempCreate opens a fresh temp file; indirected so the write-failure path is
 // testable (a test substitutes a create that returns an already-closed file).

@@ -175,8 +175,8 @@ func TestConfigMergerMergesBaseAndOverlay(t *testing.T) {
 	want := assert.New(t)
 	var written []byte
 	merger := ConfigMerger{
-		BaseNames: []string{".golangci.yaml"},
-		Flag:      "--config=",
+		BaseNames: []string{golangciBaseYAML},
+		Flag:      "--config={path}",
 		Overlays: []Overlay{
 			{
 				"linters": map[string]any{
@@ -225,7 +225,7 @@ func TestMarshalTreeSurfacesError(t *testing.T) {
 
 func TestConfigMergerMarshalErrorPropagates(t *testing.T) {
 	merger := ConfigMerger{
-		BaseNames: []string{".golangci.yaml"},
+		BaseNames: []string{golangciBaseYAML},
 		Overlays:  []Overlay{{"x": failMarshal{}}}, // unencodable -> MarshalTree fails
 		BaseDir:   "/repo",
 		Read:      fakeReader(nil),
@@ -250,7 +250,7 @@ func TestOSTempWriterSurfacesWriteError(t *testing.T) {
 
 func TestConfigMergerBaseParseErrorPropagates(t *testing.T) {
 	merger := ConfigMerger{
-		BaseNames: []string{".golangci.yaml"},
+		BaseNames: []string{golangciBaseYAML},
 		Overlays:  []Overlay{{"x": 1}},
 		BaseDir:   "/repo",
 		Read:      fakeReader(map[string][]byte{"/repo/.golangci.yaml": []byte("\tnot: yaml")}),
@@ -263,7 +263,7 @@ func TestConfigMergerBaseParseErrorPropagates(t *testing.T) {
 func TestConfigMergerTempWriteErrorPropagates(t *testing.T) {
 	sentinel := errors.New("disk full")
 	merger := ConfigMerger{
-		BaseNames: []string{".golangci.yaml"},
+		BaseNames: []string{golangciBaseYAML},
 		Overlays:  []Overlay{{"x": 1}},
 		BaseDir:   "/repo",
 		Read:      fakeReader(nil),
@@ -275,7 +275,7 @@ func TestConfigMergerTempWriteErrorPropagates(t *testing.T) {
 
 func TestConfigMergerReadBaseFallsBackThenNone(t *testing.T) {
 	want := assert.New(t)
-	names := []string{".golangci.yaml", ".golangci.yml"}
+	names := []string{golangciBaseYAML, golangciBaseYML}
 
 	yaml := ConfigMerger{
 		BaseNames: names,
@@ -295,16 +295,42 @@ func TestConfigMergerReadBaseFallsBackThenNone(t *testing.T) {
 	want.Nil(none.readBase())
 }
 
-func TestGolangciMergerWiresSpecAndSeams(t *testing.T) {
+func TestSpecMergerWiresConfigFromSpec(t *testing.T) {
 	want := assert.New(t)
 	overlays := []Overlay{{"x": 1}}
-	merger := GolangciMerger(overlays, "/repo")
-	want.Equal([]string{".golangci.yaml", ".golangci.yml"}, merger.BaseNames)
-	want.Equal("--config=", merger.Flag)
+	merger := specMerger(
+		DefaultRunnerSpecs()["golangci-lint"],
+		RunnerContext{BaseDir: "/repo", Config: map[string][]Overlay{"golangci-lint": overlays}},
+		"golangci-lint",
+	)
+	want.Equal([]string{golangciBaseYAML, golangciBaseYML}, merger.BaseNames)
+	want.Equal("--config={path}", merger.Flag)
 	want.Equal("/repo", merger.BaseDir)
 	want.Equal(overlays, merger.Overlays)
 	want.NotNil(merger.Read)
 	want.NotNil(merger.Temp)
+}
+
+func TestSpecMergerZeroWhenSpecHasNoConfig(t *testing.T) {
+	merger := specMerger(DefaultRunnerSpecs()["yze"], RunnerContext{}, "yze")
+	assert.Empty(t, merger.BaseNames)
+	assert.Nil(t, merger.Read)
+}
+
+// golangciSpecRunner builds a generic specRunner wired to the golangci parser and a
+// given merger, exercising the config-file path white-box with injected seams.
+func golangciSpecRunner(command Command, merger ConfigMerger) specRunner {
+	return specRunner{
+		spec: RunnerSpec{
+			Name:    "golangci-lint",
+			Command: []string{"golangci-lint", "run"},
+			Args:    []string{"--output.json.path=stdout", placeholderConfig, "--", placeholderRoot},
+			Format:  ParserGolangciJSON,
+		},
+		command: command,
+		parser:  parseGolangciJSON,
+		merger:  merger,
+	}
 }
 
 func TestOSTempWriterWritesAndCleans(t *testing.T) {
@@ -346,23 +372,23 @@ func TestResolveCollectsConfigOverlaysInOrder(t *testing.T) {
 
 func TestGolangciRunnerSurfacesEffectiveConfigError(t *testing.T) {
 	merger := ConfigMerger{
-		BaseNames: []string{".golangci.yaml"},
+		BaseNames: []string{golangciBaseYAML},
 		Overlays:  []Overlay{{"x": 1}},
 		BaseDir:   "/repo",
 		Read:      fakeReader(map[string][]byte{"/repo/.golangci.yaml": []byte("\tbad")}),
 		Temp:      captureTemp(new([]byte)),
 	}
 	command := func(context.Context, RunnerName, ...Arg) ([]byte, error) { return nil, nil }
-	_, err := NewGolangciRunner(command, merger).Run(context.Background(), ".")
-	assert.ErrorIs(t, err, ErrGolangciFailed)
+	_, err := golangciSpecRunner(command, merger).Run(context.Background(), ".")
+	assert.ErrorIs(t, err, ErrRunnerFailed)
 }
 
 func TestGolangciRunnerPassesConfigFlag(t *testing.T) {
 	want := assert.New(t)
 	var gotArgs []Arg
 	merger := ConfigMerger{
-		BaseNames: []string{".golangci.yaml"},
-		Flag:      "--config=",
+		BaseNames: []string{golangciBaseYAML},
+		Flag:      "--config={path}",
 		Overlays:  []Overlay{{"run": map[string]any{"timeout": "9m"}}},
 		BaseDir:   "/repo",
 		Read:      fakeReader(nil),
@@ -373,7 +399,7 @@ func TestGolangciRunnerPassesConfigFlag(t *testing.T) {
 		return []byte(`{"Issues":[],"Report":{}}`), nil
 	}
 
-	_, err := NewGolangciRunner(command, merger).Run(context.Background(), "./...")
+	_, err := golangciSpecRunner(command, merger).Run(context.Background(), "./...")
 
 	want.NoError(err)
 	want.Equal([]Arg{"run", "--output.json.path=stdout", "--config=/tmp/effective.yaml", "--", "./..."}, gotArgs)
