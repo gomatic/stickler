@@ -35,6 +35,7 @@ type sarifResult struct {
 	Level     string          `json:"level"`
 	Message   sarifMessage    `json:"message"`
 	Locations []sarifLocation `json:"locations,omitempty"`
+	Fixes     []sarifFix      `json:"fixes,omitempty"`
 }
 
 type sarifMessage struct {
@@ -57,6 +58,35 @@ type sarifArtifact struct {
 type sarifRegion struct {
 	StartLine   int `json:"startLine,omitempty"`
 	StartColumn int `json:"startColumn,omitempty"`
+}
+
+// sarifFix is a SARIF fix: a suggested change viewers and code scanning can apply.
+type sarifFix struct {
+	Description     sarifMessage          `json:"description"`
+	ArtifactChanges []sarifArtifactChange `json:"artifactChanges"`
+}
+
+type sarifArtifactChange struct {
+	ArtifactLocation sarifArtifact      `json:"artifactLocation"`
+	Replacements     []sarifReplacement `json:"replacements"`
+}
+
+// sarifReplacement deletes deletedRegion and, unless the edit is a pure deletion,
+// inserts insertedContent in its place.
+type sarifReplacement struct {
+	InsertedContent *sarifContent   `json:"insertedContent,omitempty"`
+	DeletedRegion   sarifByteRegion `json:"deletedRegion"`
+}
+
+// sarifByteRegion addresses a region by byte extent. Both properties are always
+// emitted: byteOffset 0 is a valid start and byteLength 0 marks a pure insertion.
+type sarifByteRegion struct {
+	ByteOffset int `json:"byteOffset"`
+	ByteLength int `json:"byteLength"`
+}
+
+type sarifContent struct {
+	Text string `json:"text"`
 }
 
 // formatSARIF writes the result as a SARIF 2.1.0 log whose single run carries one
@@ -87,7 +117,58 @@ func sarifResultOf(d goyze.Diagnostic) sarifResult {
 			ArtifactLocation: sarifArtifact{URI: d.Path},
 			Region:           sarifRegion{StartLine: d.Line, StartColumn: d.Col},
 		}}},
+		Fixes: sarifFixesOf(d.Fixes),
 	}
+}
+
+// sarifFixesOf maps a diagnostic's fixes onto SARIF fixes, or nil when there are
+// none so the fixes key is omitted entirely.
+func sarifFixesOf(fixes []goyze.Fix) []sarifFix {
+	if len(fixes) == 0 {
+		return nil
+	}
+	out := make([]sarifFix, 0, len(fixes))
+	for _, f := range fixes {
+		out = append(out, sarifFix{
+			Description:     sarifMessage{Text: f.Description},
+			ArtifactChanges: sarifChangesOf(f.Files),
+		})
+	}
+	return out
+}
+
+// sarifChangesOf maps one fix's per-file edit groups onto SARIF artifactChanges.
+func sarifChangesOf(files []goyze.FileEdit) []sarifArtifactChange {
+	out := make([]sarifArtifactChange, 0, len(files))
+	for _, file := range files {
+		out = append(out, sarifArtifactChange{
+			ArtifactLocation: sarifArtifact{URI: file.Path},
+			Replacements:     sarifReplacementsOf(file.Edits),
+		})
+	}
+	return out
+}
+
+// sarifReplacementsOf maps byte-offset TextEdits onto SARIF replacements: the
+// deleted region is [Start, End) and NewText, when present, is the insertion.
+func sarifReplacementsOf(edits []goyze.TextEdit) []sarifReplacement {
+	out := make([]sarifReplacement, 0, len(edits))
+	for _, e := range edits {
+		out = append(out, sarifReplacement{
+			DeletedRegion:   sarifByteRegion{ByteOffset: e.Start, ByteLength: e.End - e.Start},
+			InsertedContent: sarifContentOf(e.NewText),
+		})
+	}
+	return out
+}
+
+// sarifContentOf wraps inserted text, or nil for a pure deletion so the
+// insertedContent key is omitted.
+func sarifContentOf(text string) *sarifContent {
+	if text == "" {
+		return nil
+	}
+	return &sarifContent{Text: text}
 }
 
 // sarifLevel maps a normalized severity to a SARIF result level.

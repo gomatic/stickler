@@ -124,6 +124,12 @@ func TestFormatJSONRoundTripsIntoDiagnosticSchema(t *testing.T) {
 		Col:      2,
 		Severity: goyze.SeverityError,
 		Message:  "boom",
+		Fixes: []goyze.Fix{{
+			Description: "replace goto with loop",
+			Files: []goyze.FileEdit{
+				{Path: "a.go", Edits: []goyze.TextEdit{{NewText: "for {", Start: 10, End: 14}}},
+			},
+		}},
 	}
 	res := resultWith([]goyze.Diagnostic{want}, []error{errors.New("oops")})
 
