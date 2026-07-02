@@ -161,19 +161,21 @@ func BuildRunners(command Command, specs map[string]RunnerSpec, names []string, 
 	}
 	runners := make([]Runner, 0, len(names))
 	for _, name := range names {
-		if runner, ok := newSpecRunner(command, specs[name], nameParam(name), ctx); ok {
+		if runner, ok := newSpecRunner(command, specs[name], specName(name), ctx); ok {
 			runners = append(runners, runner)
 		}
 	}
 	return runners
 }
 
-// nameParam names the name parameter of newSpecRunner; rename it to the real domain concept.
-type nameParam string
+// specName is a runner's key in the spec registry — the name a .stickler.yaml
+// selects it by and its config overlays are keyed by (distinct from RunnerName,
+// the binary it executes).
+type specName string
 
 // newSpecRunner builds a generic runner for one spec, returning false when the spec
 // is undefined (empty name) or names a parser with no registered handler.
-func newSpecRunner(command Command, spec RunnerSpec, name nameParam, ctx RunnerContext) (Runner, bool) {
+func newSpecRunner(command Command, spec RunnerSpec, name specName, ctx RunnerContext) (Runner, bool) {
 	parser, ok := defaultParsers[spec.Format]
 	if spec.Name == "" || !ok {
 		return nil, false
@@ -183,7 +185,7 @@ func newSpecRunner(command Command, spec RunnerSpec, name nameParam, ctx RunnerC
 
 // specMerger builds the generic config merger for a spec that takes a config file,
 // or the zero merger (no-op Args) when the spec carries no ConfigSpec.
-func specMerger(spec RunnerSpec, ctx RunnerContext, name nameParam) ConfigMerger {
+func specMerger(spec RunnerSpec, ctx RunnerContext, name specName) ConfigMerger {
 	if spec.Config == nil {
 		return ConfigMerger{}
 	}
@@ -237,17 +239,18 @@ func (r specRunner) Run(ctx context.Context, root Root) ([]goyze.Diagnostic, err
 func (r specRunner) argv(root Root, configArgs []Arg) (RunnerName, []Arg) {
 	args := toArgs(r.spec.Command[1:])
 	for _, raw := range r.spec.Args {
-		args = append(args, substituteArg(rawParam(raw), root, configArgs)...)
+		args = append(args, substituteArg(argTemplate(raw), root, configArgs)...)
 	}
 	return RunnerName(r.spec.Command[0]), args
 }
 
-// rawParam names the raw parameter of substituteArg; rename it to the real domain concept.
-type rawParam string
+// argTemplate is one entry of a RunnerSpec's Args: an argument that may carry
+// the `{root}`/`{config}` placeholders, expanded to Args at run time.
+type argTemplate string
 
 // substituteArg expands one templated argument: `{config}` becomes the merged
 // config argument(s) (dropped when there are none), and `{root}` is replaced inline.
-func substituteArg(raw rawParam, root Root, configArgs []Arg) []Arg {
+func substituteArg(raw argTemplate, root Root, configArgs []Arg) []Arg {
 	if string(raw) == placeholderConfig {
 		return configArgs
 	}

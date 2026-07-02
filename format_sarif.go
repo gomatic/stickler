@@ -156,18 +156,19 @@ func sarifReplacementsOf(edits []goyze.TextEdit) []sarifReplacement {
 	for _, e := range edits {
 		out = append(out, sarifReplacement{
 			DeletedRegion:   sarifByteRegion{ByteOffset: e.Start, ByteLength: e.End - e.Start},
-			InsertedContent: sarifContentOf(textParam(e.NewText)),
+			InsertedContent: sarifContentOf(insertedText(e.NewText)),
 		})
 	}
 	return out
 }
 
-// textParam names the text parameter of sarifContentOf; rename it to the real domain concept.
-type textParam string
+// insertedText is the replacement text of one fix edit (goyze.TextEdit.NewText);
+// empty means the edit is a pure deletion.
+type insertedText string
 
 // sarifContentOf wraps inserted text, or nil for a pure deletion so the
 // insertedContent key is omitted.
-func sarifContentOf(text textParam) *sarifContent {
+func sarifContentOf(text insertedText) *sarifContent {
 	if string(text) == "" {
 		return nil
 	}
