@@ -140,13 +140,13 @@ func TestLoadLayersReportsParseError(t *testing.T) {
 
 func TestConfigPaths(t *testing.T) {
 	withXDG := stickler.ConfigPaths(func(string) string { return "/xdg" }, "/home/u", "/repo")
-	assert.Equal(t, "/xdg/stickler/config.yaml", withXDG[0])
-	assert.Equal(t, "/repo/.stickler.yaml", withXDG[1])
+	assert.Equal(t, stickler.ConfigPath("/xdg/stickler/config.yaml"), withXDG[0])
+	assert.Equal(t, stickler.ConfigPath("/repo/.stickler.yaml"), withXDG[1])
 
 	noXDG := stickler.ConfigPaths(func(string) string { return "" }, "/home/u", "/repo")
-	assert.Equal(t, "/home/u/.config/stickler/config.yaml", noXDG[0])
+	assert.Equal(t, stickler.ConfigPath("/home/u/.config/stickler/config.yaml"), noXDG[0])
 
 	// XDG spec: a relative $XDG_CONFIG_HOME is invalid and must be ignored.
 	relXDG := stickler.ConfigPaths(func(string) string { return "relative/dir" }, "/home/u", "/repo")
-	assert.Equal(t, "/home/u/.config/stickler/config.yaml", relXDG[0])
+	assert.Equal(t, stickler.ConfigPath("/home/u/.config/stickler/config.yaml"), relXDG[0])
 }
