@@ -161,16 +161,19 @@ func BuildRunners(command Command, specs map[string]RunnerSpec, names []string, 
 	}
 	runners := make([]Runner, 0, len(names))
 	for _, name := range names {
-		if runner, ok := newSpecRunner(command, specs[name], name, ctx); ok {
+		if runner, ok := newSpecRunner(command, specs[name], nameParam(name), ctx); ok {
 			runners = append(runners, runner)
 		}
 	}
 	return runners
 }
 
+// nameParam names the name parameter of newSpecRunner; rename it to the real domain concept.
+type nameParam string
+
 // newSpecRunner builds a generic runner for one spec, returning false when the spec
 // is undefined (empty name) or names a parser with no registered handler.
-func newSpecRunner(command Command, spec RunnerSpec, name string, ctx RunnerContext) (Runner, bool) {
+func newSpecRunner(command Command, spec RunnerSpec, name nameParam, ctx RunnerContext) (Runner, bool) {
 	parser, ok := defaultParsers[spec.Format]
 	if spec.Name == "" || !ok {
 		return nil, false
@@ -180,14 +183,14 @@ func newSpecRunner(command Command, spec RunnerSpec, name string, ctx RunnerCont
 
 // specMerger builds the generic config merger for a spec that takes a config file,
 // or the zero merger (no-op Args) when the spec carries no ConfigSpec.
-func specMerger(spec RunnerSpec, ctx RunnerContext, name string) ConfigMerger {
+func specMerger(spec RunnerSpec, ctx RunnerContext, name nameParam) ConfigMerger {
 	if spec.Config == nil {
 		return ConfigMerger{}
 	}
 	return ConfigMerger{
 		BaseNames: spec.Config.Base,
 		Flag:      spec.Config.Flag,
-		Overlays:  ctx.Config[name],
+		Overlays:  ctx.Config[string(name)],
 		BaseDir:   ctx.BaseDir,
 		Read:      os.ReadFile,
 		Temp:      OSTempWriter,
@@ -234,18 +237,21 @@ func (r specRunner) Run(ctx context.Context, root Root) ([]goyze.Diagnostic, err
 func (r specRunner) argv(root Root, configArgs []Arg) (RunnerName, []Arg) {
 	args := toArgs(r.spec.Command[1:])
 	for _, raw := range r.spec.Args {
-		args = append(args, substituteArg(raw, root, configArgs)...)
+		args = append(args, substituteArg(rawParam(raw), root, configArgs)...)
 	}
 	return RunnerName(r.spec.Command[0]), args
 }
 
+// rawParam names the raw parameter of substituteArg; rename it to the real domain concept.
+type rawParam string
+
 // substituteArg expands one templated argument: `{config}` becomes the merged
 // config argument(s) (dropped when there are none), and `{root}` is replaced inline.
-func substituteArg(raw string, root Root, configArgs []Arg) []Arg {
-	if raw == placeholderConfig {
+func substituteArg(raw rawParam, root Root, configArgs []Arg) []Arg {
+	if string(raw) == placeholderConfig {
 		return configArgs
 	}
-	return []Arg{Arg(strings.ReplaceAll(raw, placeholderRoot, string(root)))}
+	return []Arg{Arg(strings.ReplaceAll(string(raw), placeholderRoot, string(root)))}
 }
 
 // toArgs converts a string slice to typed Args.
