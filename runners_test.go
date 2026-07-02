@@ -194,7 +194,7 @@ func TestGolangciSpecSubstitutesRootAndDropsConfigWhenNoOverlay(t *testing.T) {
 	_, err := runnerByName(t, command, "golangci-lint").Run(context.Background(), "-x")
 
 	require.NoError(t, err)
-	assert.Equal(t, []stickler.Arg{"run", "--output.json.path=stdout", "--", "-x"}, got)
+	assert.Equal(t, []stickler.Arg{"run", "--output.json.path=stdout", "--allow-parallel-runners", "--", "-x"}, got)
 }
 
 func TestExecCommandSurfacesStderrInError(t *testing.T) {

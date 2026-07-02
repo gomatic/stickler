@@ -85,6 +85,13 @@ const (
 	golangciCfgFlag  = "--config={path}"
 	golangciBaseYAML = ".golangci.yaml"
 	golangciBaseYML  = ".golangci.yml"
+	// golangciParallelFlag disables golangci-lint's start-up file lock. That lock
+	// is global (a fixed path, not under GOLANGCI_LINT_CACHE), so N concurrent
+	// runs — a `git repo list | xargs -P<N> make check` fleet sweep — otherwise
+	// have N-1 die with "parallel golangci-lint is running" (exit 3). The cache
+	// is content-addressed and safe for concurrent runners, which is exactly why
+	// golangci ships this opt-out.
+	golangciParallelFlag = "--allow-parallel-runners"
 )
 
 // ConfigSpec declares, as data, how a tool takes its configuration file: the base
@@ -136,7 +143,7 @@ func DefaultRunnerSpecs() map[string]RunnerSpec {
 		toolGolangci: {
 			Name:    toolGolangci,
 			Command: []string{toolGolangci, golangciRunVerb},
-			Args:    []string{golangciJSONFlag, placeholderConfig, "--", placeholderRoot},
+			Args:    []string{golangciJSONFlag, golangciParallelFlag, placeholderConfig, "--", placeholderRoot},
 			Format:  ParserGolangciJSON,
 			Config:  &ConfigSpec{Base: []string{golangciBaseYAML, golangciBaseYML}, Flag: golangciCfgFlag},
 		},
