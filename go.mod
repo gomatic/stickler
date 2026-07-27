@@ -3,8 +3,8 @@ module github.com/gomatic/stickler
 go 1.26.4
 
 require (
-	github.com/gomatic/go-error v0.3.8
-	github.com/gomatic/go-yze v0.8.10
+	github.com/gomatic/go-error v0.3.10
+	github.com/gomatic/go-yze v0.8.12
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v3 v3.10.1
 	gopkg.in/yaml.v3 v3.0.1
