@@ -1,10 +1,10 @@
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/gomatic/go-error v0.3.8 h1:8L7DZrXpxfNsIuZbY27sKTjRBnhxzX3hVrd7iFlC0HM=
-github.com/gomatic/go-error v0.3.8/go.mod h1:vH7CFid9QE33lC7DQAjEajERg85PtTQzM8+pGTS5rac=
-github.com/gomatic/go-yze v0.8.10 h1:ViBxW8sQ8Nf9pRp+CP4z5tDw7BhQUanFI35GwuRamlQ=
-github.com/gomatic/go-yze v0.8.10/go.mod h1:II5yr/hDyoSTDqFoUvLAatPPXyx3dnOXXT/C7Y7h+Qc=
+github.com/gomatic/go-error v0.3.10 h1:qvLwADrl+X3yRJ81a9NSMCGXGNWQ1LIvA5XY+l1FsYI=
+github.com/gomatic/go-error v0.3.10/go.mod h1:vH7CFid9QE33lC7DQAjEajERg85PtTQzM8+pGTS5rac=
+github.com/gomatic/go-yze v0.8.12 h1:jYxRBmGUaB2jSwhmONEaVxPXPVdiTUcWc4aoHDxMHrY=
+github.com/gomatic/go-yze v0.8.12/go.mod h1:II5yr/hDyoSTDqFoUvLAatPPXyx3dnOXXT/C7Y7h+Qc=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
