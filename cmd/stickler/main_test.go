@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	errs "github.com/gomatic/go-error"
@@ -193,4 +194,32 @@ func TestMainExits(t *testing.T) {
 	main()
 
 	assert.Equal(t, 0, code)
+}
+
+// TestReportOveragesNamesEachGrownRule pins that an overage report says which
+// rule grew and by how much. A bare "failed" would leave the reader to diff two
+// counts by hand, and a ratchet nobody can read is a ratchet nobody acts on.
+func TestReportOveragesNamesEachGrownRule(t *testing.T) {
+	t.Parallel()
+
+	var out strings.Builder
+	reportOverages(&out, []stickler.Overage{
+		{Rule: "yze/invariant", Count: 5, Baseline: 3},
+		{Rule: "yze/filesize", Count: 2, Baseline: 0},
+	})
+
+	got := out.String()
+	assert.Contains(t, got, "yze/invariant: 5 soft findings, baseline 3")
+	assert.Contains(t, got, "yze/filesize: 2 soft findings, baseline 0")
+}
+
+// TestReportOveragesIsSilentWhenNothingGrew pins that a run inside its baseline
+// prints nothing, so the report only ever appears when it means something.
+func TestReportOveragesIsSilentWhenNothingGrew(t *testing.T) {
+	t.Parallel()
+
+	var out strings.Builder
+	reportOverages(&out, nil)
+
+	assert.Empty(t, out.String())
 }

@@ -48,7 +48,7 @@ func TestOrchestrateCollectsDiagnosticsFromEveryRunner(t *testing.T) {
 
 	assert.Len(t, result.Diagnostics, 2)
 	assert.Empty(t, result.Errors)
-	assert.True(t, result.Failed(nil))
+	assert.True(t, result.Failed(nil, nil))
 }
 
 func TestOrchestrateRunsAllToCompletionDespiteAnError(t *testing.T) {
@@ -62,7 +62,7 @@ func TestOrchestrateRunsAllToCompletionDespiteAnError(t *testing.T) {
 	require.Len(t, result.Errors, 1)
 	assert.True(t, errors.Is(result.Errors[0], stickler.ErrRunner))
 	assert.Len(t, result.Diagnostics, 1)
-	assert.True(t, result.Failed(nil))
+	assert.True(t, result.Failed(nil, nil))
 }
 
 func TestResultFailedIsFalseOnlyWhenCleanAndErrorFree(t *testing.T) {
@@ -70,7 +70,7 @@ func TestResultFailedIsFalseOnlyWhenCleanAndErrorFree(t *testing.T) {
 		fakeRunner{name: "yze"},
 	})
 
-	assert.False(t, clean.Failed(nil))
+	assert.False(t, clean.Failed(nil, nil))
 	assert.Empty(t, clean.Diagnostics)
 	assert.Empty(t, clean.Errors)
 }
@@ -81,27 +81,59 @@ func TestResultSoftFailDoesNotGateButHardStillDoes(t *testing.T) {
 		{Tool: "yze", Rule: "yze/ptrrecv"},
 		{Tool: "golangci-lint", Rule: "errcheck"},
 	}}
+	// a baseline that permits the soft finding present, so this test isolates
+	// softening from the ratchet (which has its own test below).
+	within := stickler.Baseline{"yze/ptrrecv": 1}
 
 	// soft-failing the whole yze tool still leaves the golangci finding hard.
-	want.True(result.Failed(stickler.Soft{"yze"}), "a hard golangci finding still gates")
+	want.True(result.Failed(stickler.Soft{"yze"}, within), "a hard golangci finding still gates")
 
 	// soft-failing every present tool makes the run pass (findings reported, not gating).
-	want.False(result.Failed(stickler.Soft{"yze", "golangci-lint"}))
+	want.False(result.Failed(stickler.Soft{"yze", "golangci-lint"}, stickler.Baseline{
+		"yze/ptrrecv": 1, "errcheck": 1,
+	}))
 
 	// per-analyzer soft: only the named rule is soft, the golangci rule still gates.
-	want.True(result.Failed(stickler.Soft{"yze/ptrrecv"}), "the golangci rule is not softened")
+	want.True(result.Failed(stickler.Soft{"yze/ptrrecv"}, within), "the golangci rule is not softened")
 	want.False(
 		stickler.Result{
 			Diagnostics: []goyze.Diagnostic{{Tool: "yze", Rule: "yze/ptrrecv"}},
-		}.Failed(
-			stickler.Soft{"yze/ptrrecv"},
-		),
+		}.Failed(stickler.Soft{"yze/ptrrecv"}, within),
 	)
+}
+
+func TestSoftFindingsGateOnceTheyGrowPastTheBaseline(t *testing.T) {
+	want := assert.New(t)
+	soft := stickler.Soft{"yze/invariant"}
+	two := stickler.Result{Diagnostics: []goyze.Diagnostic{
+		{Tool: "yze", Rule: "yze/invariant"},
+		{Tool: "yze", Rule: "yze/invariant"},
+	}}
+
+	// at or under the committed ceiling, softening holds.
+	want.False(two.Failed(soft, stickler.Baseline{"yze/invariant": 2}), "at the baseline is permitted")
+	want.False(two.Failed(soft, stickler.Baseline{"yze/invariant": 5}), "under the baseline is permitted")
+
+	// past it, the run gates: a soft rule that nobody counts is invisible, not
+	// non-blocking, so growth has to hurt.
+	want.True(two.Failed(soft, stickler.Baseline{"yze/invariant": 1}), "growth past the baseline gates")
+
+	// a rule absent from the baseline is ceilinged at zero, so a repository that
+	// has never carried a finding cannot silently acquire one.
+	want.True(two.Failed(soft, nil), "an unrecorded rule is permitted nothing")
+
+	over := two.OverBaseline(soft, stickler.Baseline{"yze/invariant": 1})
+	want.Equal([]stickler.Overage{{Rule: "yze/invariant", Count: 2, Baseline: 1}}, over)
+	want.Empty(two.OverBaseline(soft, stickler.Baseline{"yze/invariant": 2}))
+
+	// a HARD rule is not counted by the ratchet at all; it gates on its own.
+	hard := stickler.Result{Diagnostics: []goyze.Diagnostic{{Tool: "yze", Rule: "yze/gotostmt"}}}
+	want.Empty(hard.OverBaseline(soft, nil), "only soft findings are counted against a baseline")
 }
 
 func TestResultSoftDoesNotMaskRunnerErrors(t *testing.T) {
 	// a runner ERROR (the tool could not run) gates regardless of soft — soft only
 	// suppresses findings, not infrastructure failures.
 	result := stickler.Result{Errors: []error{errs.Const("yze crashed")}}
-	assert.True(t, result.Failed(stickler.Soft{"yze"}))
+	assert.True(t, result.Failed(stickler.Soft{"yze"}, nil))
 }

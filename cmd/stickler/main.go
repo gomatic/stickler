@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -101,10 +102,21 @@ func action(ctx context.Context, cmd *cli.Command) error {
 	if err := stickler.Format(cmd.Writer, format, result); err != nil {
 		return err
 	}
-	if result.Failed(stickler.Soft(resolved.Soft)) {
+	reportOverages(cmd.Root().ErrWriter, result.OverBaseline(stickler.Soft(resolved.Soft), resolved.SoftBaseline))
+	if result.Failed(stickler.Soft(resolved.Soft), resolved.SoftBaseline) {
 		return errFailed
 	}
 	return nil
+}
+
+// reportOverages names each soft rule that has grown past its committed
+// baseline. A bare "failed" would leave the reader to diff two counts by hand,
+// and the whole point of the ratchet is that growth is visible.
+func reportOverages(out io.Writer, overages []stickler.Overage) {
+	for _, over := range overages {
+		_, _ = fmt.Fprintf(out, "%s: %d soft findings, baseline %d — fix one or raise the baseline deliberately\n",
+			over.Rule, over.Count, over.Baseline)
+	}
 }
 
 // configure loads and resolves the global and repo configuration layers.

@@ -26,9 +26,13 @@ type Config struct {
 	Analyzers map[string]map[string]StringList `yaml:"analyzers"`
 	Config    map[string]Overlay               `yaml:"config"`
 	Define    map[string]RunnerSpec            `yaml:"define"`
-	Format    string                           `yaml:"format"`
-	Runners   StringList                       `yaml:"runners"`
-	Soft      StringList                       `yaml:"soft"`
+	// SoftBaseline is the per-rule ceiling on soft findings; see Baseline. A
+	// later layer overrides an earlier one entry by entry, so a repository
+	// records its own numbers without restating the global set.
+	SoftBaseline map[string]int `yaml:"soft-baseline"`
+	Format       string         `yaml:"format"`
+	Runners      StringList     `yaml:"runners"`
+	Soft         StringList     `yaml:"soft"`
 }
 
 // Resolved is the concrete configuration after all layers are folded. Config maps
@@ -36,25 +40,28 @@ type Config struct {
 // repo last); a config-file runner folds them onto its base config in the repo at
 // run time, since that base lives in the repo, not in any stickler layer.
 type Resolved struct {
-	Analyzers map[string]map[string][]string
-	Config    map[string][]Overlay
-	Define    map[string]RunnerSpec
-	Format    string
-	Runners   []string
-	Soft      []string
+	Analyzers    map[string]map[string][]string
+	Config       map[string][]Overlay
+	Define       map[string]RunnerSpec
+	SoftBaseline map[string]int
+	Format       string
+	Runners      []string
+	Soft         []string
 }
 
 // Resolve folds the layers in order (global first, repo last), applying each
 // layer's add/remove/replace directives onto the accumulated result.
 func Resolve(layers ...Config) Resolved {
 	resolved := Resolved{
-		Analyzers: map[string]map[string][]string{},
-		Config:    map[string][]Overlay{},
-		Define:    map[string]RunnerSpec{},
+		Analyzers:    map[string]map[string][]string{},
+		Config:       map[string][]Overlay{},
+		Define:       map[string]RunnerSpec{},
+		SoftBaseline: map[string]int{},
 	}
 	for _, layer := range layers {
 		resolved.Runners = layer.Runners.applyTo(resolved.Runners)
 		resolved.Soft = layer.Soft.applyTo(resolved.Soft)
+		maps.Copy(resolved.SoftBaseline, layer.SoftBaseline)
 		if layer.Format != "" {
 			resolved.Format = layer.Format
 		}

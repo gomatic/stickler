@@ -7,6 +7,7 @@ package stickler
 import (
 	"cmp"
 	"context"
+	"maps"
 	"slices"
 	"sync"
 
@@ -45,16 +46,60 @@ func (s Soft) covers(diag goyze.Diagnostic) bool {
 	return slices.Contains(s, diag.Tool) || slices.Contains(s, diag.Rule)
 }
 
-// Failed reports whether the pass should fail the build: any runner error, or any
-// HARD (not soft-listed) diagnostic. Soft diagnostics are still reported by the
-// formatter; they just do not gate.
-func (r Result) Failed(soft Soft) bool {
-	if len(r.Errors) > 0 {
+// Baseline is the committed per-rule ceiling on SOFT findings: rule id to the
+// number of findings that rule is currently permitted. It is a RATCHET, not a
+// budget — the count may only fall, and raising an entry is a reviewable diff
+// with an author and a date.
+//
+// Without it, softening a rule makes its findings invisible rather than
+// non-blocking, which is the quieter form of a permanently red build: a probe
+// nobody counts manufactures the appearance of coverage. A rule absent from the
+// baseline is ceilinged at zero, so a repository that has never carried a
+// finding cannot silently acquire one.
+type Baseline map[string]int
+
+// Overage is one soft rule reporting more findings than its baseline permits.
+type Overage struct {
+	Rule     string
+	Count    int
+	Baseline int
+}
+
+// Failed reports whether the pass should fail the build: any runner error, any
+// HARD (not soft-listed) diagnostic, or any soft rule that has grown past its
+// committed baseline. Soft diagnostics within their baseline are still reported
+// by the formatter; they just do not gate.
+func (r Result) Failed(soft Soft, baseline Baseline) bool {
+	if len(r.Errors) > 0 || len(r.OverBaseline(soft, baseline)) > 0 {
 		return true
 	}
 	return slices.ContainsFunc(r.Diagnostics, func(diag goyze.Diagnostic) bool {
 		return !soft.covers(diag)
 	})
+}
+
+// OverBaseline returns every soft rule whose finding count exceeds its
+// committed baseline, in stable rule order so output is deterministic.
+func (r Result) OverBaseline(soft Soft, baseline Baseline) []Overage {
+	counts := r.softCounts(soft)
+	over := make([]Overage, 0, len(counts))
+	for _, rule := range slices.Sorted(maps.Keys(counts)) {
+		if counts[rule] > baseline[rule] {
+			over = append(over, Overage{Rule: rule, Count: counts[rule], Baseline: baseline[rule]})
+		}
+	}
+	return over
+}
+
+// softCounts tallies the soft-listed diagnostics by rule.
+func (r Result) softCounts(soft Soft) map[string]int {
+	counts := map[string]int{}
+	for _, diag := range r.Diagnostics {
+		if soft.covers(diag) {
+			counts[diag.Rule]++
+		}
+	}
+	return counts
 }
 
 // runnerResult is one runner's outcome, stored at its index so the merged output
