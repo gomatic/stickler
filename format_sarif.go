@@ -175,14 +175,22 @@ func sarifContentOf(text insertedText) *sarifContent {
 	return &sarifContent{Text: string(text)}
 }
 
-// sarifLevel maps a normalized severity to a SARIF result level.
+// sarifLevelNote is SARIF's name for the lowest level; SARIF says "note" where
+// a GitHub annotation says "notice", so the two vocabularies stay separate.
+const sarifLevelNote = "note"
+
+// sarifLevel maps a normalized severity to a SARIF result level. Every declared
+// Severity is named, so a severity added to go-yze without a level here is a
+// visible omission rather than a finding silently reported as an error.
 func sarifLevel(severity goyze.Severity) string {
 	switch severity {
 	case goyze.SeverityWarning:
 		return levelWarning
 	case goyze.SeverityInfo:
-		return "note"
+		return sarifLevelNote
+	case goyze.SeverityError:
+		return levelError
 	default:
-		return "error"
+		return levelError
 	}
 }

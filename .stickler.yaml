@@ -7,7 +7,7 @@
 # The rest are HARD rules softened only for rollout, and return to gating
 # once their counts reach zero.
 soft-baseline:
-  exhaustive: 4
-  yze/errtested: 1
-  yze/filesize: 2
-  yze/invariant: 4
+  exhaustive: 0
+  yze/errtested: 0
+  yze/filesize: 0
+  yze/invariant: 0

@@ -37,7 +37,10 @@ type StringList struct {
 }
 
 // UnmarshalYAML accepts a sequence (replace) or an add/remove/replace mapping,
-// rejecting any unknown mapping key (a config typo such as `addd`). The pointer
+// rejecting any unknown mapping key (a config typo such as `addd`). Every other
+// node kind is named explicitly rather than swept into the default: a scalar
+// where a list belongs is the most likely way to mis-write this setting, and it
+// must be refused rather than silently accepted as an empty list. The pointer
 // receiver and *yaml.Node parameter are dictated by the yaml.Unmarshaler interface,
 // which a polymorphic (sequence-or-mapping) setting must implement.
 func (l *StringList) UnmarshalYAML(node *yaml.Node) error {
@@ -54,6 +57,8 @@ func (l *StringList) UnmarshalYAML(node *yaml.Node) error {
 		}
 		l.add, l.remove, l.replace = directives.Add, directives.Remove, directives.Replace
 		return nil
+	case yaml.DocumentNode, yaml.ScalarNode, yaml.AliasNode:
+		return ErrBadListSetting
 	default:
 		return ErrBadListSetting
 	}

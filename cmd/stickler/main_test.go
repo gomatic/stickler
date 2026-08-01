@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	goyze "github.com/gomatic/go-yze"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
 
 	"github.com/gomatic/stickler"
 )
@@ -222,4 +224,40 @@ func TestReportOveragesIsSilentWhenNothingGrew(t *testing.T) {
 	reportOverages(&out, nil)
 
 	assert.Empty(t, out.String())
+}
+
+// TestDefaultTimeoutBoundsAWedgedLintPass names defaultTimeout's claim. Every
+// runner is a subprocess, and a subprocess that never exits would otherwise
+// hang the job until the CI platform's own timeout kills it — with no output,
+// no partial result, and nothing naming the tool that wedged. The bound is what
+// turns that into a reported failure.
+//
+// The flag's default must be the constant, not a separately-written duration:
+// two places carrying the same number is how a bound gets raised in one of them
+// and silently stops applying.
+func TestDefaultTimeoutBoundsAWedgedLintPass(t *testing.T) {
+	assert.Positive(t, defaultTimeout, "an unbounded pass can hang a job indefinitely")
+
+	var found bool
+	for _, f := range createApp().Flags {
+		if d, ok := f.(*cli.DurationFlag); ok && d.Name == "timeout" {
+			found = true
+			assert.Equal(t, defaultTimeout, d.Value,
+				"the --timeout default must BE the constant, not a second copy of the number")
+		}
+	}
+	assert.True(t, found, "the timeout flag must exist, or the bound is unreachable")
+}
+
+// TestErrFailedIsTheSignalThatDrivesANonZeroExit names errFailed. It is the one
+// error that means "the lint pass ran correctly and found problems", as opposed
+// to "the lint pass itself broke" — and the two must stay distinguishable,
+// because a CI job that cannot tell them apart either ignores real findings or
+// treats a crashed linter as a clean run.
+func TestErrFailedIsTheSignalThatDrivesANonZeroExit(t *testing.T) {
+	assert.ErrorIs(t, errFailed, errFailed)
+	assert.NotErrorIs(t, errors.New("some other failure"), errFailed,
+		"an unrelated error must not be mistaken for a lint failure")
+	assert.NotEqual(t, 0, run([]string{appName, "--format", "not-a-format"}),
+		"a failing run must exit non-zero")
 }

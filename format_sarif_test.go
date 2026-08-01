@@ -174,3 +174,53 @@ func TestFormatSARIFSurfacesWriteError(t *testing.T) {
 	res := resultWith([]goyze.Diagnostic{{Rule: "yze/x", Path: "a.go", Message: "m"}}, nil)
 	require.Error(t, stickler.Format(failWriter{}, stickler.OutputSARIF, res))
 }
+
+// TestSarifByteRegionAlwaysEmitsBothProperties names sarifByteRegion's claim.
+// Neither property carries omitempty, and that is the whole point: byteOffset 0
+// is a valid start — an edit at the very top of a file — and byteLength 0 marks
+// a pure insertion. With omitempty either would vanish from the JSON, and a
+// SARIF consumer applying the fix would read a missing byteOffset as
+// "unspecified" and a missing byteLength as "to the end of the artifact",
+// turning an insertion at the start of a file into a truncation of it.
+func TestSarifByteRegionAlwaysEmitsBothProperties(t *testing.T) {
+	diags := []goyze.Diagnostic{{
+		Rule:     "yze/thing",
+		Path:     "a.go",
+		Line:     1,
+		Col:      1,
+		Severity: goyze.SeverityError,
+		Message:  "insert at the top of the file",
+		Fixes: []goyze.Fix{{
+			Description: "prepend",
+			Files: []goyze.FileEdit{{
+				Path: "a.go",
+				// A pure insertion at offset zero: both numbers are zero and
+				// both must still appear.
+				Edits: []goyze.TextEdit{{NewText: "// header\n", Start: 0, End: 0}},
+			}},
+		}},
+	}}
+	var buf bytes.Buffer
+
+	require.NoError(t, stickler.Format(&buf, stickler.OutputSARIF, resultWith(diags, nil)))
+
+	var log map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &log))
+	region := regionOf(t, log)
+
+	assert.Contains(t, region, "byteOffset", "byteOffset 0 is a real start, not an absent value")
+	assert.Contains(t, region, "byteLength", "byteLength 0 marks a pure insertion, not an absent value")
+	assert.Equal(t, float64(0), region["byteOffset"])
+	assert.Equal(t, float64(0), region["byteLength"])
+}
+
+// regionOf digs the single replacement's deletedRegion out of a SARIF log.
+func regionOf(t *testing.T, log map[string]any) map[string]any {
+	t.Helper()
+	runs := log["runs"].([]any)
+	results := runs[0].(map[string]any)["results"].([]any)
+	fixes := results[0].(map[string]any)["fixes"].([]any)
+	changes := fixes[0].(map[string]any)["artifactChanges"].([]any)
+	repls := changes[0].(map[string]any)["replacements"].([]any)
+	return repls[0].(map[string]any)["deletedRegion"].(map[string]any)
+}

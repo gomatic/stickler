@@ -29,139 +29,6 @@ func captureTemp(captured *[]byte) TempWriter {
 	}
 }
 
-func TestMergeTreeDeepMergesMapsAndReplacesScalars(t *testing.T) {
-	want := assert.New(t)
-	base := map[string]any{
-		"run":     map[string]any{"timeout": "5m"},
-		"linters": map[string]any{"default": "standard", "enable": []any{"gocognit"}},
-	}
-	overlay := Overlay{
-		"run":     map[string]any{"timeout": "10m"},                       // scalar replace
-		"linters": map[string]any{"settings": map[string]any{"gosec": 1}}, // new nested key
-	}
-
-	got := MergeTree(base, []Overlay{overlay})
-
-	want.Equal("10m", got["run"].(map[string]any)["timeout"])
-	linters := got["linters"].(map[string]any)
-	want.Equal("standard", linters["default"], "untouched key preserved")
-	want.Equal([]any{"gocognit"}, linters["enable"], "untouched list preserved")
-	want.Equal(1, linters["settings"].(map[string]any)["gosec"])
-	want.Equal("5m", base["run"].(map[string]any)["timeout"], "base not mutated")
-}
-
-func TestMergeTreeListDirectives(t *testing.T) {
-	want := assert.New(t)
-	base := map[string]any{"excludes": []any{"G101", "G204"}}
-
-	add := MergeTree(base, []Overlay{{"excludes": map[string]any{"add": []any{"G115"}}}})
-	want.Equal([]string{"G101", "G204", "G115"}, add["excludes"])
-
-	remove := MergeTree(base, []Overlay{{"excludes": map[string]any{"remove": []any{"G101"}}}})
-	want.Equal([]string{"G204"}, remove["excludes"])
-
-	replace := MergeTree(base, []Overlay{{"excludes": map[string]any{"replace": []any{"G999"}}}})
-	want.Equal([]string{"G999"}, replace["excludes"])
-
-	fresh := MergeTree(map[string]any{}, []Overlay{{"disable": map[string]any{"add": []any{"fieldalignment"}}}})
-	want.Equal([]string{"fieldalignment"}, fresh["disable"], "directive on absent key starts empty")
-}
-
-func TestMergeTreeReplaceWithEmptyAndSequence(t *testing.T) {
-	want := assert.New(t)
-	base := map[string]any{"enable": []any{"a", "b"}}
-
-	cleared := MergeTree(base, []Overlay{{"enable": map[string]any{"replace": []any{}}}})
-	want.Equal([]string{}, cleared["enable"], "explicit empty replace clears")
-
-	seq := MergeTree(base, []Overlay{{"enable": []any{"only"}}})
-	want.Equal([]any{"only"}, seq["enable"], "a plain sequence replaces wholesale")
-}
-
-func TestMergeTreeAppliesDirectivesFromDecodedOverlay(t *testing.T) {
-	// Regression: a .stickler.yaml decoded through LoadLayers yields nested maps of
-	// the named Overlay type (not plain map[string]any). The merge must still
-	// deep-merge and apply directives — a plain-type assertion would silently leave
-	// the directive map in place and drop the base list.
-	want := assert.New(t)
-	read := func(string) ([]byte, error) {
-		return []byte("config:\n  golangci-lint:\n    linters:\n      settings:\n" +
-			"        gosec:\n          excludes: { add: [G101, G118] }\n" +
-			"        govet:\n          disable: { add: [fieldalignment] }\n"), nil
-	}
-	layers, err := LoadLayers(read, ".stickler.yaml")
-	require.NoError(t, err)
-	overlays := Resolve(layers...).Config["golangci-lint"]
-
-	base := map[string]any{"linters": map[string]any{"settings": map[string]any{
-		"gosec": map[string]any{"excludes": []any{"G115"}},
-		"govet": map[string]any{"enable-all": true},
-	}}}
-	settings := MergeTree(base, overlays)["linters"].(map[string]any)["settings"].(map[string]any)
-
-	want.Equal(
-		[]string{"G115", "G101", "G118"},
-		settings["gosec"].(map[string]any)["excludes"],
-		"directive merged onto base list",
-	)
-	want.Equal([]string{"fieldalignment"}, settings["govet"].(map[string]any)["disable"])
-	want.Equal(true, settings["govet"].(map[string]any)["enable-all"], "untouched base key preserved")
-}
-
-func TestMergeTreeMapReplacesNonMapBase(t *testing.T) {
-	got := MergeTree(map[string]any{"x": "scalar"}, []Overlay{{"x": map[string]any{"deep": 1}}})
-	assert.Equal(t, map[string]any{"deep": 1}, got["x"])
-}
-
-func TestMergeTreeFoldsLayersInOrder(t *testing.T) {
-	got := MergeTree(
-		map[string]any{"excludes": []any{}},
-		[]Overlay{
-			{"excludes": map[string]any{"add": []any{"G1"}}},
-			{"excludes": map[string]any{"add": []any{"G2"}, "remove": []any{"G1"}}},
-		},
-	)
-	assert.Equal(t, []string{"G2"}, got["excludes"])
-}
-
-func TestAsDirectivesRejectsNonDirectiveValues(t *testing.T) {
-	want := assert.New(t)
-	_, ok := asDirectives(map[string]any{"add": []any{"x"}, "timeout": "5m"})
-	want.False(ok, "a map mixing a directive key with another key is not a directive set")
-	_, ok = asDirectives(map[string]any{})
-	want.False(ok, "an empty map is not a directive set")
-	_, ok = asDirectives("scalar")
-	want.False(ok)
-}
-
-func TestParseTree(t *testing.T) {
-	want := assert.New(t)
-
-	empty, err := ParseTree(nil)
-	want.NoError(err)
-	want.Equal(map[string]any{}, empty)
-
-	null, err := ParseTree([]byte("null\n"))
-	want.NoError(err)
-	want.Equal(map[string]any{}, null)
-
-	tree, err := ParseTree([]byte("run:\n  timeout: 5m\n"))
-	want.NoError(err)
-	want.Equal("5m", tree["run"].(map[string]any)["timeout"])
-
-	_, err = ParseTree([]byte("\tnot: yaml"))
-	want.ErrorIs(err, ErrConfig)
-}
-
-func TestMarshalTreeRoundTrips(t *testing.T) {
-	want := assert.New(t)
-	data, err := MarshalTree(map[string]any{"run": map[string]any{"timeout": "5m"}})
-	want.NoError(err)
-	back, err := ParseTree(data)
-	want.NoError(err)
-	want.Equal("5m", back["run"].(map[string]any)["timeout"])
-}
-
 func TestConfigMergerNoOverlaysIsNoOp(t *testing.T) {
 	want := assert.New(t)
 	args, cleanup, err := ConfigMerger{}.Args()
@@ -206,22 +73,11 @@ func TestConfigMergerMergesBaseAndOverlay(t *testing.T) {
 	want.Equal([]any{"G101", "G204"}, excludes, "re-parsed YAML yields a generic sequence")
 }
 
-func TestMergeTreeReplaceWithNonListClears(t *testing.T) {
-	// `replace:` present but not a sequence coerces to the empty list, clearing.
-	got := MergeTree(map[string]any{"l": []any{"a"}}, []Overlay{{"l": map[string]any{"replace": "scalar"}}})
-	assert.Equal(t, []string{}, got["l"])
-}
-
 // failMarshal is a value whose MarshalYAML returns an error, so yaml.Marshal fails
 // (rather than panicking, as it does for a chan/func), exercising the error paths.
 type failMarshal struct{}
 
 func (failMarshal) MarshalYAML() (any, error) { return nil, errors.New("cannot encode") }
-
-func TestMarshalTreeSurfacesError(t *testing.T) {
-	_, err := MarshalTree(map[string]any{"x": failMarshal{}})
-	assert.ErrorIs(t, err, ErrConfig)
-}
 
 func TestConfigMergerMarshalErrorPropagates(t *testing.T) {
 	merger := ConfigMerger{

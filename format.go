@@ -17,6 +17,15 @@ const ErrUnknownOutput errs.Const = "unknown output format"
 // the github/sarif level mappers.
 const levelWarning = "warning"
 
+// levelNotice and levelError are the remaining GitHub annotation levels. Named
+// alongside levelWarning so the mapping below can cover every declared Severity
+// explicitly: an unnamed severity falling through a default is a finding
+// silently downgraded or upgraded in CI output.
+const (
+	levelNotice = "notice"
+	levelError  = "error"
+)
+
 // OutputFormat names how a Result is rendered.
 type OutputFormat string
 
@@ -115,36 +124,16 @@ func githubProps(d goyze.Diagnostic) string {
 	return strings.Join(props, ",")
 }
 
-// ghValue is a string destined for a GitHub workflow command, escaped before it is
-// embedded so control characters and delimiters cannot break the annotation.
-type ghValue string
-
-// escapeGitHubData escapes a workflow-command message: %, CR, and LF. % is escaped
-// first so the % introduced by later replacements is not double-escaped.
-func escapeGitHubData(v ghValue) string {
-	s := strings.ReplaceAll(string(v), "%", "%25")
-	s = strings.ReplaceAll(s, "\r", "%0D")
-	s = strings.ReplaceAll(s, "\n", "%0A")
-	return s
-}
-
-// escapeGitHubProperty escapes a workflow-command property value: the data escapes
-// plus the property delimiters comma and colon.
-func escapeGitHubProperty(v ghValue) string {
-	s := escapeGitHubData(v)
-	s = strings.ReplaceAll(s, ",", "%2C")
-	s = strings.ReplaceAll(s, ":", "%3A")
-	return s
-}
-
 // ghLevel maps a severity to a GitHub annotation level.
 func ghLevel(severity goyze.Severity) string {
 	switch severity {
 	case goyze.SeverityWarning:
 		return levelWarning
 	case goyze.SeverityInfo:
-		return "notice"
+		return levelNotice
+	case goyze.SeverityError:
+		return levelError
 	default:
-		return "error"
+		return levelError
 	}
 }
