@@ -69,7 +69,50 @@ func Resolve(layers ...Config) Resolved {
 		appendConfigOverlays(resolved.Config, layer.Config)
 		mergeDefines(resolved.Define, layer.Define)
 	}
+	appendAnalyzerOverlay(resolved.Config, resolved.Analyzers)
 	return resolved
+}
+
+// appendAnalyzerOverlay delivers the resolved `analyzers:` settings to yze as
+// the last entry of its overlay list, so they reach the analyzer suite through
+// the same generic config-merge path every other tool uses — and, being last,
+// win over anything the `config: yze:` block set for the same key.
+//
+// Nothing is appended when no settings were configured: an empty overlay list
+// is what tells the merger to pass no --config at all, leaving yze to discover
+// its own .yze.yaml exactly as before.
+func appendAnalyzerOverlay(config map[string][]Overlay, analyzers map[string]map[string][]string) {
+	if len(analyzers) == 0 {
+		return
+	}
+	config[toolYze] = append(config[toolYze], Overlay{analyzersKey: analyzerTree(analyzers)})
+}
+
+// analyzersKey is the top-level key yze reads its per-analyzer settings from.
+const analyzersKey = "analyzers"
+
+// analyzerTree renders the resolved settings as the generic YAML tree the
+// merger and yze both expect: analyzer name -> setting name -> list.
+func analyzerTree(analyzers map[string]map[string][]string) map[string]any {
+	tree := make(map[string]any, len(analyzers))
+	for analyzer, settings := range analyzers {
+		values := make(map[string]any, len(settings))
+		for setting, list := range settings {
+			values[setting] = toAnyList(list)
+		}
+		tree[analyzer] = values
+	}
+	return tree
+}
+
+// toAnyList widens a resolved string list to the []any a decoded YAML
+// sequence carries, so a later merge treats it like any other sequence.
+func toAnyList(list []string) []any {
+	out := make([]any, len(list))
+	for i, item := range list {
+		out[i] = item
+	}
+	return out
 }
 
 // mergeDefines folds a layer's runner-spec definitions onto the accumulator; a

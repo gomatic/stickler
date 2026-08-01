@@ -150,3 +150,87 @@ func TestConfigPaths(t *testing.T) {
 	relXDG := stickler.ConfigPaths(func(string) string { return "relative/dir" }, "/home/u", "/repo")
 	assert.Equal(t, stickler.ConfigPath("/home/u/.config/stickler/config.yaml"), relXDG[0])
 }
+
+// TestResolveDeliversAnalyzerSettingsToYze pins the whole point of the
+// `analyzers:` block: the resolved settings must reach yze as a config
+// overlay. Without this they parse, merge, and are silently discarded — a
+// repository's declared analyzer configuration would have no effect at all.
+func TestResolveDeliversAnalyzerSettingsToYze(t *testing.T) {
+	resolved := stickler.Resolve(parseConfig(t, `
+analyzers:
+  ptrparam:
+    allow: [google.golang.org/grpc.UnaryServerInfo]
+`))
+
+	overlays := resolved.Config["yze"]
+	require.Len(t, overlays, 1, "the analyzer settings must reach yze")
+	assert.Equal(t, stickler.Overlay{
+		"analyzers": map[string]any{
+			"ptrparam": map[string]any{
+				"allow": []any{"google.golang.org/grpc.UnaryServerInfo"},
+			},
+		},
+	}, overlays[0])
+}
+
+// TestResolveFoldsLayeredAnalyzerSettingsIntoOneOverlay pins that the
+// delivered overlay carries the FOLDED result: a repo's add/remove directives
+// are applied before delivery, so yze sees one effective list per setting.
+func TestResolveFoldsLayeredAnalyzerSettingsIntoOneOverlay(t *testing.T) {
+	global := parseConfig(t, `
+analyzers:
+  ptrparam:
+    allow: [pkg.A, pkg.B]
+`)
+	repo := parseConfig(t, `
+analyzers:
+  ptrparam:
+    allow:
+      add: [pkg.C]
+      remove: [pkg.A]
+`)
+	resolved := stickler.Resolve(global, repo)
+
+	overlays := resolved.Config["yze"]
+	require.Len(t, overlays, 1)
+	analyzers, ok := overlays[0]["analyzers"].(map[string]any)
+	require.True(t, ok)
+	settings, ok := analyzers["ptrparam"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{"pkg.B", "pkg.C"}, settings["allow"])
+}
+
+// TestResolveAppendsAnalyzerOverlayAfterConfigOverlays pins precedence: the
+// typed `analyzers:` surface is delivered last, so it wins over a raw
+// `config: yze:` entry for the same key.
+func TestResolveAppendsAnalyzerOverlayAfterConfigOverlays(t *testing.T) {
+	resolved := stickler.Resolve(parseConfig(t, `
+config:
+  yze:
+    analyzers:
+      ptrparam:
+        allow: [from.config.block]
+analyzers:
+  ptrparam:
+    allow: [from.analyzers.block]
+`))
+
+	overlays := resolved.Config["yze"]
+	require.Len(t, overlays, 2)
+	effective := stickler.MergeTree(map[string]any{}, overlays)
+	analyzers, ok := effective["analyzers"].(map[string]any)
+	require.True(t, ok)
+	settings, ok := analyzers["ptrparam"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{"from.analyzers.block"}, settings["allow"],
+		"the typed analyzers: surface is authoritative")
+}
+
+// TestAppendAnalyzerOverlayAddsNothingWithoutSettings pins the no-op case
+// appendAnalyzerOverlay documents: an empty overlay list is what leaves yze
+// discovering its own .yze.yaml, so a repository that configures nothing
+// must not gain a synthesized config.
+func TestAppendAnalyzerOverlayAddsNothingWithoutSettings(t *testing.T) {
+	resolved := stickler.Resolve(parseConfig(t, "runners: [yze]\n"))
+	assert.Empty(t, resolved.Config["yze"])
+}

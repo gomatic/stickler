@@ -312,9 +312,20 @@ func TestSpecMergerWiresConfigFromSpec(t *testing.T) {
 }
 
 func TestSpecMergerZeroWhenSpecHasNoConfig(t *testing.T) {
-	merger := specMerger(DefaultRunnerSpecs()["yze"], RunnerContext{}, "yze")
+	spec := RunnerSpec{Name: "plain", Command: []string{"plain"}, Format: ParserSticklerJSON}
+	merger := specMerger(spec, RunnerContext{}, "plain")
 	assert.Empty(t, merger.BaseNames)
 	assert.Nil(t, merger.Read)
+}
+
+// TestSpecMergerWiresYzeConfig pins that yze takes its configuration through
+// the same generic merge path as every other tool: the per-analyzer settings
+// a repository declares are useless unless they reach the analyzer suite.
+func TestSpecMergerWiresYzeConfig(t *testing.T) {
+	merger := specMerger(DefaultRunnerSpecs()["yze"], RunnerContext{BaseDir: "/repo"}, "yze")
+	assert.Equal(t, []string{".yze.yaml", ".yze.yml"}, merger.BaseNames)
+	assert.Equal(t, "--config={path}", merger.Flag)
+	assert.NotNil(t, merger.Read)
 }
 
 // golangciSpecRunner builds a generic specRunner wired to the golangci parser and a

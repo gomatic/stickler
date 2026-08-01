@@ -85,6 +85,9 @@ const (
 	golangciCfgFlag  = "--config={path}"
 	golangciBaseYAML = ".golangci.yaml"
 	golangciBaseYML  = ".golangci.yml"
+	yzeCfgFlag       = "--config={path}"
+	yzeBaseYAML      = ".yze.yaml"
+	yzeBaseYML       = ".yze.yml"
 	// golangciParallelFlag disables golangci-lint's start-up file lock. That lock
 	// is global (a fixed path, not under GOLANGCI_LINT_CACHE), so N concurrent
 	// runs — a `git repo list | xargs -P<N> make check` fleet sweep — otherwise
@@ -129,16 +132,20 @@ var defaultParsers = map[ParserName]Parser{
 }
 
 // DefaultRunnerSpecs is the built-in tool set as pure data: yze (native
-// stickler-json, no config file) and golangci-lint (adapted JSON, config merged
-// from the repo's .golangci.yaml). A .stickler.yaml `define:` block overrides or
+// stickler-json, config merged from the repo's .yze.yaml plus the resolved
+// `analyzers:` settings) and golangci-lint (adapted JSON, config merged from
+// the repo's .golangci.yaml). A .stickler.yaml `define:` block overrides or
 // extends this map without touching Go.
 func DefaultRunnerSpecs() map[string]RunnerSpec {
 	return map[string]RunnerSpec{
 		toolYze: {
 			Name:    toolYze,
 			Command: []string{toolYze},
-			Args:    []string{"--format", string(ParserSticklerJSON), "--", placeholderRoot},
-			Format:  ParserSticklerJSON,
+			Args: []string{
+				"--format", string(ParserSticklerJSON), placeholderConfig, "--", placeholderRoot,
+			},
+			Format: ParserSticklerJSON,
+			Config: &ConfigSpec{Base: []string{yzeBaseYAML, yzeBaseYML}, Flag: yzeCfgFlag},
 		},
 		toolGolangci: {
 			Name:    toolGolangci,
