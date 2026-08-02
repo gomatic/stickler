@@ -162,16 +162,19 @@ type RunnerContext struct {
 }
 
 // BuildRunners resolves the named runners against the spec registry (built-in
-// defaults overlaid with any config-defined specs) into generic runners. Names
-// default to every defined spec. An unknown name, or a spec naming an unknown
-// parser, is skipped.
+// defaults overlaid with any config-defined specs) and the native checks into
+// generic runners. Names default to every defined spec plus every native
+// check. A config-defined spec with a native check's name overrides it, so a
+// repository can rewire even a native check without a recompile. An unknown
+// name, or a spec naming an unknown parser, is skipped.
 func BuildRunners(command Command, specs map[string]RunnerSpec, names []string, ctx RunnerContext) []Runner {
+	native := nativeRunners()
 	if len(names) == 0 {
-		names = sortedKeys(specs)
+		names = defaultNames(specs, native)
 	}
 	runners := make([]Runner, 0, len(names))
 	for _, name := range names {
-		if runner, ok := newSpecRunner(command, specs[name], specName(name), ctx); ok {
+		if runner, ok := resolveRunner(command, specs, native, specName(name), ctx); ok {
 			runners = append(runners, runner)
 		}
 	}

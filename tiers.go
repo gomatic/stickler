@@ -1,0 +1,176 @@
+package stickler
+
+// Collecting the tier trees: one filesystem walk parses every non-test Go
+// file beneath a tier marker and records which packages declare themselves —
+// a command entry point on the app side, the Config/Result/Run contract on
+// the domain side.
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"path/filepath"
+	"strings"
+)
+
+// tierTree is every self-declaring package of each tier, by pair key.
+type tierTree struct {
+	commands map[pairKey]tierDecl
+	domains  map[pairKey]tierDecl
+}
+
+// collectTiers walks the module once, parsing every non-test Go file beneath a
+// tier marker and recording the packages that declare themselves.
+func collectTiers(dir rootPath) (tierTree, error) {
+	tree := tierTree{commands: map[pairKey]tierDecl{}, domains: map[pairKey]tierDecl{}}
+	err := filepath.WalkDir(string(dir), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return skipDir(sourcePath(path), dir, dirName(entry.Name()))
+		}
+		if isSourceFile(sourcePath(path)) {
+			tree.record(sourcePath(filepath.ToSlash(path)))
+		}
+		return nil
+	})
+	return tree, err
+}
+
+// dirName is one directory's base name during the walk.
+type dirName string
+
+// The directory names the go tool ignores wholesale.
+const (
+	dirTestdata dirName = "testdata"
+	dirVendor   dirName = "vendor"
+)
+
+// skipDir prunes the directories the go tool itself ignores — testdata,
+// vendor, and hidden or underscore-prefixed names — so an analyzer repo's own
+// fixtures are not judged as its layout. The walk root is exempt: walking "."
+// must not skip everything.
+func skipDir(path sourcePath, root rootPath, name dirName) error {
+	if string(path) == string(root) {
+		return nil
+	}
+	if name == dirTestdata || name == dirVendor ||
+		strings.HasPrefix(string(name), ".") || strings.HasPrefix(string(name), "_") {
+		return fs.SkipDir
+	}
+	return nil
+}
+
+// isSourceFile reports whether path names a non-test Go source file.
+func isSourceFile(path sourcePath) bool {
+	return strings.HasSuffix(string(path), ".go") && !strings.HasSuffix(string(path), "_test.go")
+}
+
+// record parses one source file and records its package's self-declaration, if
+// the file lies beneath a tier marker and declares the tier's shape.
+func (t tierTree) record(path sourcePath) {
+	if key, ok := markerKey(path, commandsMarker); ok {
+		recordDecl(t.commands, key, path, declaresCommand)
+	}
+	if key, ok := markerKey(path, domainMarker); ok {
+		recordDecl(t.domains, key, path, declaresContract)
+	}
+}
+
+// markerKey extracts the pair key for a file beneath the given tier marker:
+// the prefix before internal/ joined with the package path beneath the marker.
+// A file directly in the marker directory (the shared domain vocabulary
+// package) has no verb path and is not a pair.
+func markerKey(path sourcePath, marker tierMarker) (pairKey, bool) {
+	prefix, rest, found := strings.Cut(string(path), string(marker))
+	if !found || (prefix != "" && !strings.HasSuffix(prefix, "/")) {
+		return pairKey{}, false
+	}
+	verb := rest[:max(strings.LastIndex(rest, "/"), 0)]
+	if verb == "" {
+		return pairKey{}, false
+	}
+	return pairKey{prefix: prefix, verb: verb}, true
+}
+
+// declKind decides whether one parsed file declares its tier's shape, returning
+// the declaration's line when it does.
+type declKind func(file *ast.File, fset *token.FileSet) (int, bool)
+
+// recordDecl parses path and records the package under key when the file
+// declares the tier's shape. A file that does not parse declares nothing. The
+// first declaring file anchors the package's diagnostics.
+func recordDecl(tier map[pairKey]tierDecl, key pairKey, path sourcePath, declares declKind) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, string(path), nil, parser.SkipObjectResolution)
+	if err != nil {
+		return
+	}
+	line, ok := declares(file, fset)
+	if !ok {
+		return
+	}
+	if _, exists := tier[key]; !exists {
+		tier[key] = tierDecl{path: path, line: line}
+	}
+}
+
+// declaresCommand reports a file declaring a command entry point: an exported
+// top-level Command or <Verb>Command function, mirroring yze/cliapp's gate.
+func declaresCommand(file *ast.File, fset *token.FileSet) (int, bool) {
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Recv == nil && ast.IsExported(fn.Name.Name) && strings.HasSuffix(fn.Name.Name, "Command") {
+			return fset.Position(fn.Pos()).Line, true
+		}
+	}
+	return 0, false
+}
+
+// declaresContract reports a file declaring any element of the domain contract
+// (Config, Result, Run), mirroring yze/clidomain's gate.
+func declaresContract(file *ast.File, fset *token.FileSet) (int, bool) {
+	for _, decl := range file.Decls {
+		if line, ok := contractDecl(decl, fset); ok {
+			return line, ok
+		}
+	}
+	return 0, false
+}
+
+// contractDecl reports whether one declaration names an element of the domain
+// contract.
+func contractDecl(decl ast.Decl, fset *token.FileSet) (int, bool) {
+	switch d := decl.(type) {
+	case *ast.FuncDecl:
+		if d.Recv == nil && isContractName(declName(d.Name.Name)) {
+			return fset.Position(d.Pos()).Line, true
+		}
+	case *ast.GenDecl:
+		return contractSpec(d, fset)
+	}
+	return 0, false
+}
+
+// contractSpec reports whether a type declaration names an element of the
+// domain contract.
+func contractSpec(decl *ast.GenDecl, fset *token.FileSet) (int, bool) {
+	for _, spec := range decl.Specs {
+		ts, ok := spec.(*ast.TypeSpec)
+		if ok && isContractName(declName(ts.Name.Name)) {
+			return fset.Position(ts.Pos()).Line, true
+		}
+	}
+	return 0, false
+}
+
+// declName is a declared top-level identifier.
+type declName string
+
+// isContractName reports whether name is one of the domain contract's
+// declarations.
+func isContractName(name declName) bool {
+	return name == "Config" || name == "Result" || name == "Run"
+}

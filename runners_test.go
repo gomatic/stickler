@@ -114,9 +114,10 @@ func TestBuildRunnersSelectsKnownAndIgnoresUnknown(t *testing.T) {
 func TestBuildRunnersDefaultsToEveryDefinedSpecSorted(t *testing.T) {
 	runners := stickler.BuildRunners(fakeCommand("", nil), stickler.DefaultRunnerSpecs(), nil, stickler.RunnerContext{})
 
-	require.Len(t, runners, 2)
-	assert.Equal(t, "golangci-lint", runners[0].Name())
-	assert.Equal(t, "yze", runners[1].Name())
+	require.Len(t, runners, 3)
+	assert.Equal(t, "clilayout", runners[0].Name())
+	assert.Equal(t, "golangci-lint", runners[1].Name())
+	assert.Equal(t, "yze", runners[2].Name())
 }
 
 func TestMergeSpecsOverridesDefaultAndAddsNew(t *testing.T) {
