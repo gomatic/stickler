@@ -143,6 +143,22 @@ func TestMarkerKeySeparatesTreesAndSkipsTheMarkerRoot(t *testing.T) {
 	want.False(ok, "a look-alike segment is not the marker")
 }
 
+// TestRecordNeverCreatesAPhantomInnerTier names record's claim: a file whose
+// path nests the other tier's marker beneath a command or domain package
+// belongs to the OUTER tier, never to a phantom inner one whose counterpart
+// path would be nonsense.
+func TestRecordNeverCreatesAPhantomInnerTier(t *testing.T) {
+	t.Parallel()
+
+	tree := tierTree{commands: map[pairKey]tierDecl{}, domains: map[pairKey]tierDecl{}}
+	tree.record("testdata/clilayout/conformant/internal/app/commands/greet/internal/domain/help/help.go")
+	tree.record("testdata/clilayout/conformant/internal/domain/greet/internal/app/commands/aux/aux.go")
+
+	assert.Empty(t, tree.commands, "neither file declares its OUTER tier's shape, so neither is recorded —"+
+		" the nested aux Command belongs to the domain tier, where it is not a contract")
+	assert.Empty(t, tree.domains, "the nested help Config belongs to the command tier, where it is not an entry point")
+}
+
 // TestSkipDirPrunesWhatTheGoToolIgnores names skipDir's claims: testdata,
 // vendor, and hidden or underscore-prefixed directories are pruned so an
 // analyzer repo's own fixtures are not judged as its layout — while the walk

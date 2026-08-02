@@ -69,14 +69,30 @@ func isSourceFile(path sourcePath) bool {
 }
 
 // record parses one source file and records its package's self-declaration, if
-// the file lies beneath a tier marker and declares the tier's shape.
+// the file lies beneath a tier marker and declares the tier's shape. A file's
+// tier is decided by the FIRST marker on its path: a helper tree that happens
+// to nest the other tier's marker beneath a command or domain package
+// (commands/greet/internal/domain/help) belongs to the OUTER tier — where the
+// self-declaration gate judges it — never to a phantom inner one whose
+// counterpart path would be nonsense.
 func (t tierTree) record(path sourcePath) {
-	if key, ok := markerKey(path, commandsMarker); ok {
-		recordDecl(t.commands, key, path, declaresCommand)
+	commandKey, isCommand := markerKey(path, commandsMarker)
+	domainKey, isDomain := markerKey(path, domainMarker)
+	if isCommand && isDomain {
+		isDomain = markerIndex(path, domainMarker) < markerIndex(path, commandsMarker)
+		isCommand = !isDomain
 	}
-	if key, ok := markerKey(path, domainMarker); ok {
-		recordDecl(t.domains, key, path, declaresContract)
+	if isCommand {
+		recordDecl(t.commands, commandKey, path, declaresCommand)
 	}
+	if isDomain {
+		recordDecl(t.domains, domainKey, path, declaresContract)
+	}
+}
+
+// markerIndex is the position of the marker's first occurrence in path.
+func markerIndex(path sourcePath, marker tierMarker) int {
+	return strings.Index(string(path), string(marker))
 }
 
 // markerKey extracts the pair key for a file beneath the given tier marker:
