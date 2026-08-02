@@ -72,12 +72,23 @@ func createApp() *cli.Command {
 		ArgsUsage:      "[root]",
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "format", Usage: "output format (human, json, github, sarif); overrides config"},
-			&cli.StringFlag{Name: "root", Usage: "directory whose .stickler.yaml is loaded (default: the target)"},
+			&cli.StringFlag{
+				Name:    "format",
+				Value:   "",
+				Sources: cli.EnvVars("STICKLER_FORMAT"),
+				Usage:   "output format (human, json, github, sarif); overrides config",
+			},
+			&cli.StringFlag{
+				Name:    "root",
+				Value:   "",
+				Sources: cli.EnvVars("STICKLER_ROOT"),
+				Usage:   "directory whose .stickler.yaml is loaded (default: the target)",
+			},
 			&cli.DurationFlag{
-				Name:  "timeout",
-				Value: defaultTimeout,
-				Usage: "maximum duration for the whole lint pass",
+				Name:    "timeout",
+				Value:   defaultTimeout,
+				Sources: cli.EnvVars("STICKLER_TIMEOUT"),
+				Usage:   "maximum duration for the whole lint pass",
 			},
 		},
 		Action: action,
