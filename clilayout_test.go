@@ -152,10 +152,10 @@ func TestRecordNeverCreatesAPhantomInnerTier(t *testing.T) {
 
 	tree := tierTree{commands: map[pairKey]tierDecl{}, domains: map[pairKey]tierDecl{}}
 	tree.record("testdata/clilayout/conformant/internal/app/commands/greet/internal/domain/help/help.go")
-	tree.record("testdata/clilayout/conformant/internal/domain/greet/internal/app/commands/aux/aux.go")
+	tree.record("testdata/clilayout/conformant/internal/domain/greet/internal/app/commands/helper/helper.go")
 
 	assert.Empty(t, tree.commands, "neither file declares its OUTER tier's shape, so neither is recorded —"+
-		" the nested aux Command belongs to the domain tier, where it is not a contract")
+		" the nested helper Command belongs to the domain tier, where it is not a contract")
 	assert.Empty(t, tree.domains, "the nested help Config belongs to the command tier, where it is not an entry point")
 }
 
