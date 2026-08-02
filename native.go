@@ -9,7 +9,10 @@ import "slices"
 
 // nativeRunners is the registry of native checks, keyed like the spec registry.
 func nativeRunners() map[specName]Runner {
-	return map[specName]Runner{clilayoutName: clilayoutRunner{}}
+	return map[specName]Runner{
+		clilayoutName: clilayoutRunner{},
+		binariesName:  binariesRunner{},
+	}
 }
 
 // defaultNames is every defined spec plus every native check, in one

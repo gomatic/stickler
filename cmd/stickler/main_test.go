@@ -154,10 +154,11 @@ func TestActionReportsConfigError(t *testing.T) {
 func TestDefaultBuildRunners(t *testing.T) {
 	runners := defaultBuildRunners(stickler.DefaultRunnerSpecs(), nil, stickler.RunnerContext{})
 
-	require.Len(t, runners, 3)
-	assert.Equal(t, "clilayout", runners[0].Name())
-	assert.Equal(t, "golangci-lint", runners[1].Name())
-	assert.Equal(t, "yze", runners[2].Name())
+	require.Len(t, runners, 4)
+	assert.Equal(t, "binaries", runners[0].Name())
+	assert.Equal(t, "clilayout", runners[1].Name())
+	assert.Equal(t, "golangci-lint", runners[2].Name())
+	assert.Equal(t, "yze", runners[3].Name())
 }
 
 func TestConfigRoot(t *testing.T) {
