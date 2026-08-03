@@ -7,10 +7,13 @@ package stickler
 
 import (
 	"go/ast"
+	"go/build/constraint"
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -116,11 +119,18 @@ func markerKey(path sourcePath, marker tierMarker) (pairKey, bool) {
 type declKind func(file *ast.File, fset *token.FileSet) (int, bool)
 
 // recordDecl parses path and records the package under key when the file
-// declares the tier's shape. A file that does not parse declares nothing. The
-// first declaring file anchors the package's diagnostics.
+// declares the tier's shape. A file that cannot be read or does not parse
+// declares nothing, and neither does a file whose build constraints exclude
+// it from the default build — a //go:build ignore file is not part of the
+// layout, so its declarations must not conjure a verb demanding a
+// counterpart. The first declaring file anchors the package's diagnostics.
 func recordDecl(tier map[pairKey]tierDecl, key pairKey, path sourcePath, declares declKind) {
+	src, err := os.ReadFile(string(path))
+	if err != nil || buildExcluded(src) {
+		return
+	}
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, string(path), nil, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fset, string(path), src, parser.SkipObjectResolution)
 	if err != nil {
 		return
 	}
@@ -131,6 +141,48 @@ func recordDecl(tier map[pairKey]tierDecl, key pairKey, path sourcePath, declare
 	if _, exists := tier[key]; !exists {
 		tier[key] = tierDecl{path: path, line: line}
 	}
+}
+
+// buildExcluded reports whether the file's build constraints exclude it from
+// the default build. Only the header is scanned — the region before the first
+// non-blank, non-line-comment line — matching where the go tool requires a
+// constraint to appear, so the scan stays as cheap as the tier walk's own
+// file reads.
+func buildExcluded(src []byte) bool {
+	satisfied := func(tag string) bool { return defaultTag(buildTag(tag)) }
+	for _, line := range headerLines(src) {
+		if expr, err := constraint.Parse(line); err == nil && !expr.Eval(satisfied) {
+			return true
+		}
+	}
+	return false
+}
+
+// headerLines returns the file's leading blank and line-comment lines — the
+// only region where a build constraint may appear.
+func headerLines(src []byte) []string {
+	var lines []string
+	for line := range strings.Lines(string(src)) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "//") {
+			return lines
+		}
+		lines = append(lines, trimmed)
+	}
+	return lines
+}
+
+// buildTag is one tag queried while evaluating a build constraint.
+type buildTag string
+
+// defaultTag reports whether one build tag is satisfied in the default build
+// the layout describes: the host OS and architecture, the unix family, the gc
+// toolchain with cgo available, and the go1.N language versions — mirroring
+// go/build's defaults without loading a build.Context. An unknown custom tag
+// is unsatisfied, exactly as it is for an untagged `go build`.
+func defaultTag(tag buildTag) bool {
+	return string(tag) == runtime.GOOS || string(tag) == runtime.GOARCH || tag == "unix" ||
+		tag == "gc" || tag == "cgo" || strings.HasPrefix(string(tag), "go1.")
 }
 
 // declaresCommand reports a file declaring a command entry point: an exported

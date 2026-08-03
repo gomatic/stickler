@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"io/fs"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -186,6 +187,96 @@ func TestContractDeclIgnoresNonDeclarations(t *testing.T) {
 
 	assert.False(t, ok)
 	assert.Zero(t, line)
+}
+
+// TestClilayoutIgnoresBuildExcludedFiles pins the constraint gate in both
+// directions: a domain package whose ONLY contract declaration lives in a
+// //go:build ignore file is not a verb (skipping it silences the false
+// "domain verb has no command package"), while a build-excluded sibling must
+// not hide a package's real, untagged declaration — solo/ is still reported,
+// anchored at its untagged file.
+func TestClilayoutIgnoresBuildExcludedFiles(t *testing.T) {
+	t.Parallel()
+
+	diags, err := clilayoutRunner{}.Run(context.Background(), "testdata/clilayout/tagged")
+
+	require.NoError(t, err)
+	require.Len(t, diags, 1, "greet/ declares only in a build-excluded file and binds nothing: %v", messagesOf(diags))
+	assert.Contains(t, diags[0].Message, "internal/domain/solo has no command package")
+	assert.True(t, strings.HasSuffix(diags[0].Path, "solo/solo.go"),
+		"the diagnostic anchors at the untagged declaring file, never the excluded one: %s", diags[0].Path)
+}
+
+// TestRecordDeclMustNotConjureAVerbFromABuildExcludedFile names recordDecl's
+// invariant directly: a build-excluded file records nothing under its key,
+// while its untagged sibling shape records normally — the seam through which
+// a //go:build ignore file would otherwise become a phantom domain verb.
+func TestRecordDeclMustNotConjureAVerbFromABuildExcludedFile(t *testing.T) {
+	t.Parallel()
+	tier := map[pairKey]tierDecl{}
+	key := pairKey{prefix: "testdata/clilayout/tagged/", verb: "greet"}
+
+	recordDecl(tier, key, "testdata/clilayout/tagged/internal/domain/greet/greet.go", declaresContract)
+	assert.Empty(t, tier, "the excluded file's contract declarations record nothing")
+
+	recordDecl(tier, key, "testdata/clilayout/tagged/internal/domain/solo/solo.go", declaresContract)
+	require.Len(t, tier, 1, "an untagged declaring file still records")
+
+	recordDecl(tier, key, "testdata/clilayout/tagged/internal/domain/greet/does-not-exist.go", declaresContract)
+	assert.Len(t, tier, 1, "an unreadable file declares nothing")
+}
+
+// TestBuildExcludedReadsOnlyTheConstraintHeader names buildExcluded's claims:
+// an unsatisfiable constraint (//go:build ignore, its legacy // +build form,
+// or an unknown custom tag) excludes the file; a satisfied constraint and an
+// unconstrained file do not; and only the header is read — a "constraint"
+// after the package clause is ordinary text the go tool would ignore too.
+func TestBuildExcludedReadsOnlyTheConstraintHeader(t *testing.T) {
+	t.Parallel()
+	want := assert.New(t)
+
+	want.True(buildExcluded([]byte("//go:build ignore\n\npackage p\n")))
+	want.True(buildExcluded([]byte("// +build ignore\n\npackage p\n")))
+	want.True(buildExcluded([]byte("//go:build integration\n\npackage p\n")), "an unknown custom tag is unsatisfied")
+	want.True(buildExcluded([]byte("// Copyright.\n\n//go:build ignore\n\npackage p\n")),
+		"ordinary comments before the constraint do not end the header")
+
+	want.False(buildExcluded([]byte("package p\n")), "an unconstrained file is part of the default build")
+	want.False(buildExcluded([]byte("//go:build go1.1\n\npackage p\n")), "a satisfied constraint keeps the file")
+	want.False(buildExcluded([]byte("package p\n\n//go:build ignore\n")),
+		"a constraint after the package clause is not a constraint")
+	want.False(buildExcluded([]byte("//go:build !!!\npackage p\n")), "an unparsable constraint line is skipped")
+}
+
+// TestDefaultTagMirrorsTheDefaultBuild pins which tags the layout's notion of
+// the default build satisfies: the host platform, the unix family, gc, cgo,
+// and the go1.N versions — and nothing else, so ignore and custom tags stay
+// unsatisfied.
+func TestDefaultTagMirrorsTheDefaultBuild(t *testing.T) {
+	t.Parallel()
+	want := assert.New(t)
+
+	for _, tag := range []buildTag{buildTag(runtime.GOOS), buildTag(runtime.GOARCH), "unix", "gc", "cgo", "go1.22"} {
+		want.True(defaultTag(tag), "%s is satisfied in the default build", tag)
+	}
+	for _, tag := range []buildTag{"ignore", "integration", "windows_probe", "gccgo"} {
+		want.False(defaultTag(tag), "%s is not satisfied in the default build", tag)
+	}
+}
+
+// TestHeaderLinesStopsAtTheFirstNonCommentLine pins the header boundary the
+// constraint scan relies on: blanks and line comments are collected, and the
+// first anything-else — package clause, block comment, code — ends the header.
+func TestHeaderLinesStopsAtTheFirstNonCommentLine(t *testing.T) {
+	t.Parallel()
+	want := assert.New(t)
+
+	header := headerLines([]byte("// a\n\n//go:build ignore\npackage p\n//tail\n"))
+	want.Equal([]string{"// a", "", "//go:build ignore"}, header)
+	want.Empty(headerLines([]byte("package p\n")))
+	want.Equal([]string{"// only comments"}, headerLines([]byte("// only comments\n")), "EOF ends the header too")
+	want.Empty(headerLines([]byte("/* block */\n//go:build ignore\npackage p\n")),
+		"a block comment ends the header scan — go:build must be a line comment before it")
 }
 
 // messagesOf projects diagnostics onto their messages.
