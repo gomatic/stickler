@@ -60,7 +60,7 @@ const (
 	// is global (a fixed path, not under GOLANGCI_LINT_CACHE), so N concurrent
 	// runs — a `git repo list | xargs -P<N> make check` fleet sweep — otherwise
 	// have N-1 die with "parallel golangci-lint is running" (exit 3). The cache
-	// is content-addressed and safe for concurrent runners, which is exactly why
+	// is content-addressed and safe for concurrent runners, which is why
 	// golangci ships this opt-out.
 	golangciParallelFlag = "--allow-parallel-runners"
 	// golangciCacheEnv is golangci-lint's cache-directory selector, bound to

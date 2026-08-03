@@ -54,7 +54,7 @@ func TestMergeTreeFoldsLayersInOrder(t *testing.T) {
 	assert.Equal(t, []string{"G2"}, got["excludes"])
 }
 
-func TestParseTree(t *testing.T) {
+func TestParseTreeErrConfigOnUnparseableYAML(t *testing.T) {
 	want := assert.New(t)
 
 	empty, err := ParseTree(nil)
