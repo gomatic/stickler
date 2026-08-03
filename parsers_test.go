@@ -128,12 +128,13 @@ func TestGolangciSpecSubstitutesRootAndDropsConfigWhenNoOverlay(t *testing.T) {
 	assert.Equal(t, []stickler.Arg{"run", "--output.json.path=stdout", "--allow-parallel-runners", "--", "-x"}, got)
 }
 
-func TestBuildRunnersSkipsSpecWithUnknownParser(t *testing.T) {
+func TestBuildRunnersFailsLoudOnUnknownParser(t *testing.T) {
 	specs := stickler.MergeSpecs(stickler.DefaultRunnerSpecs(), map[string]stickler.RunnerSpec{
 		"custom": {Name: "custom", Command: []string{"custom"}, Format: "no-such-parser"},
 	})
-	runners := stickler.BuildRunners(fakeCommand("", nil), specs, []string{"custom", "yze"}, stickler.RunnerContext{})
+	_, err := stickler.BuildRunners(fakeCommand("", nil), specs, []string{"custom", "yze"}, stickler.RunnerContext{})
 
-	require.Len(t, runners, 1)
-	assert.Equal(t, "yze", runners[0].Name())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, stickler.ErrUnknownRunner))
+	assert.Contains(t, err.Error(), "custom")
 }

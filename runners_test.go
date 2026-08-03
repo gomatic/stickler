@@ -31,7 +31,13 @@ func capturingCommand(out string, err error, gotArgs *[]stickler.Arg) stickler.C
 // with no config overlays (config-file wiring is covered white-box in configmerge_test).
 func runnerByName(t *testing.T, command stickler.Command, name string) stickler.Runner {
 	t.Helper()
-	runners := stickler.BuildRunners(command, stickler.DefaultRunnerSpecs(), []string{name}, stickler.RunnerContext{})
+	runners, err := stickler.BuildRunners(
+		command,
+		stickler.DefaultRunnerSpecs(),
+		[]string{name},
+		stickler.RunnerContext{},
+	)
+	require.NoError(t, err)
 	require.Len(t, runners, 1)
 	return runners[0]
 }
@@ -81,22 +87,32 @@ func TestYzeSpecSubstitutesRootAfterDoubleDash(t *testing.T) {
 	assert.Equal(t, []stickler.Arg{"--format", "stickler-json", "--", "-x"}, got)
 }
 
-func TestBuildRunnersSelectsKnownAndIgnoresUnknown(t *testing.T) {
-	runners := stickler.BuildRunners(
+// TestBuildRunnersErrUnknownRunnerOnUnknownName pins the fail-closed contract: a
+// selected runner that resolves to nothing is an error naming it, because a
+// silent skip would let a repo ask for a check and pass greenly while it
+// went unrun.
+func TestBuildRunnersErrUnknownRunnerOnUnknownName(t *testing.T) {
+	_, err := stickler.BuildRunners(
 		fakeCommand("", nil),
 		stickler.DefaultRunnerSpecs(),
 		[]string{"yze", "nope", "golangci-lint"},
 		stickler.RunnerContext{},
 	)
 
-	require.Len(t, runners, 2)
-	assert.Equal(t, "yze", runners[0].Name())
-	assert.Equal(t, "golangci-lint", runners[1].Name())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, stickler.ErrUnknownRunner))
+	assert.Contains(t, err.Error(), "nope")
 }
 
 func TestBuildRunnersDefaultsToEveryDefinedSpecSorted(t *testing.T) {
-	runners := stickler.BuildRunners(fakeCommand("", nil), stickler.DefaultRunnerSpecs(), nil, stickler.RunnerContext{})
+	runners, err := stickler.BuildRunners(
+		fakeCommand("", nil),
+		stickler.DefaultRunnerSpecs(),
+		nil,
+		stickler.RunnerContext{},
+	)
 
+	require.NoError(t, err)
 	require.Len(t, runners, 4)
 	assert.Equal(t, "binaries", runners[0].Name())
 	assert.Equal(t, "clilayout", runners[1].Name())

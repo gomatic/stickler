@@ -46,7 +46,7 @@ var (
 // each config-file runner the context it needs to merge its effective config.
 func defaultBuildRunners(
 	specs map[string]stickler.RunnerSpec, names []string, ctx stickler.RunnerContext,
-) []stickler.Runner {
+) ([]stickler.Runner, error) {
 	return stickler.BuildRunners(stickler.ExecCommand, specs, names, ctx)
 }
 
@@ -108,7 +108,11 @@ func action(ctx context.Context, cmd *cli.Command) error {
 	}
 	runnerCtx := stickler.RunnerContext{BaseDir: string(repoRoot), Config: resolved.Config}
 	specs := stickler.MergeSpecs(stickler.DefaultRunnerSpecs(), resolved.Define)
-	result := stickler.Orchestrate(ctx, root, buildRunners(specs, resolved.Runners, runnerCtx))
+	runners, err := buildRunners(specs, resolved.Runners, runnerCtx)
+	if err != nil {
+		return err
+	}
+	result := stickler.Orchestrate(ctx, root, runners)
 	format := chooseFormat(stickler.OutputFormat(cmd.String("format")), stickler.OutputFormat(resolved.Format))
 	if err := stickler.Format(cmd.Writer, format, result); err != nil {
 		return err

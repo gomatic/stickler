@@ -15,7 +15,8 @@ import (
 // hermeticRunner builds the single named default-spec runner over command.
 func hermeticRunner(t *testing.T, command Command, name string) Runner {
 	t.Helper()
-	runners := BuildRunners(command, DefaultRunnerSpecs(), []string{name}, RunnerContext{})
+	runners, err := BuildRunners(command, DefaultRunnerSpecs(), []string{name}, RunnerContext{})
+	require.NoError(t, err)
 	require.Len(t, runners, 1)
 	return runners[0]
 }

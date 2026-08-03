@@ -57,8 +57,8 @@ func swapRunners(t *testing.T, runners ...stickler.Runner) {
 	t.Cleanup(func() { buildRunners = original })
 	buildRunners = func(
 		map[string]stickler.RunnerSpec, []string, stickler.RunnerContext,
-	) []stickler.Runner {
-		return runners
+	) ([]stickler.Runner, error) {
+		return runners, nil
 	}
 	swapReadFile(t, "", errs.Const("no config")) // hermetic: no config files
 }
@@ -119,11 +119,11 @@ func TestActionUsesConfiguredRunnersAndFormat(t *testing.T) {
 	var gotNames []string
 	originalBuild := buildRunners
 	t.Cleanup(func() { buildRunners = originalBuild })
-	buildRunners = func(_ map[string]stickler.RunnerSpec, names []string, _ stickler.RunnerContext) []stickler.Runner {
+	buildRunners = func(_ map[string]stickler.RunnerSpec, names []string, _ stickler.RunnerContext) ([]stickler.Runner, error) {
 		gotNames = names
 		return []stickler.Runner{
 			fakeRunner{diags: []goyze.Diagnostic{{Path: "a.go", Rule: "yze/gotostmt", Message: "x"}}},
-		}
+		}, nil
 	}
 	swapReadFile(t, "runners: [yze]\nformat: json\n", nil)
 
@@ -152,8 +152,9 @@ func TestActionReportsConfigError(t *testing.T) {
 }
 
 func TestDefaultBuildRunners(t *testing.T) {
-	runners := defaultBuildRunners(stickler.DefaultRunnerSpecs(), nil, stickler.RunnerContext{})
+	runners, err := defaultBuildRunners(stickler.DefaultRunnerSpecs(), nil, stickler.RunnerContext{})
 
+	require.NoError(t, err)
 	require.Len(t, runners, 4)
 	assert.Equal(t, "binaries", runners[0].Name())
 	assert.Equal(t, "clilayout", runners[1].Name())
@@ -262,4 +263,16 @@ func TestErrFailedIsTheSignalThatDrivesANonZeroExit(t *testing.T) {
 		"an unrelated error must not be mistaken for a lint failure")
 	assert.NotEqual(t, 0, run([]string{appName, "--format", "not-a-format"}),
 		"a failing run must exit non-zero")
+}
+
+// TestActionFailsLoudOnUnknownRunner pins the wiring end to end: a config
+// selecting a runner nothing defines is an execution error naming it, not a
+// silent pass over zero runners.
+func TestActionFailsLoudOnUnknownRunner(t *testing.T) {
+	swapReadFile(t, "runners: [no-such-runner]\n", nil)
+
+	_, err := runApp(t, appName)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, stickler.ErrUnknownRunner))
 }

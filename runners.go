@@ -147,24 +147,33 @@ type RunnerContext struct {
 	BaseDir string
 }
 
+// ErrUnknownRunner reports a selected runner name no spec or native check
+// defines, or a defined spec that cannot run (empty name, unregistered
+// parser). A selection that silently resolved to nothing would let a repo ask
+// for a check and pass greenly while it never ran — a fail-open gate — so the
+// unresolvable name is an error, never a skip.
+const ErrUnknownRunner errs.Const = "unknown runner"
+
 // BuildRunners resolves the named runners against the spec registry (built-in
 // defaults overlaid with any config-defined specs) and the native checks into
 // generic runners. Names default to every defined spec plus every native
 // check. A config-defined spec with a native check's name overrides it, so a
 // repository can rewire even a native check without a recompile. An unknown
-// name, or a spec naming an unknown parser, is skipped.
-func BuildRunners(command Command, specs map[string]RunnerSpec, names []string, ctx RunnerContext) []Runner {
+// name, or a spec naming an unknown parser, fails with ErrUnknownRunner.
+func BuildRunners(command Command, specs map[string]RunnerSpec, names []string, ctx RunnerContext) ([]Runner, error) {
 	native := nativeRunners()
 	if len(names) == 0 {
 		names = defaultNames(specs, native)
 	}
 	runners := make([]Runner, 0, len(names))
 	for _, name := range names {
-		if runner, ok := resolveRunner(command, specs, native, specName(name), ctx); ok {
-			runners = append(runners, runner)
+		runner, ok := resolveRunner(command, specs, native, specName(name), ctx)
+		if !ok {
+			return nil, ErrUnknownRunner.With(nil, "name", name)
 		}
+		runners = append(runners, runner)
 	}
-	return runners
+	return runners, nil
 }
 
 // specName is a runner's key in the spec registry — the name a .stickler.yaml
