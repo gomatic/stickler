@@ -1,10 +1,8 @@
 package stickler
 
 import (
-	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"strings"
 
 	errs "github.com/gomatic/go-error"
@@ -22,45 +20,19 @@ const (
 	ErrExec errs.Const = "command execution failed"
 )
 
-// RunnerName identifies a runner's binary (the first word of its command).
-type RunnerName string
-
-// Arg is one command-line argument passed to a runner's binary.
-type Arg string
-
-// Command runs an external tool and returns its stdout. A non-nil error includes
-// a non-zero exit; callers that can still parse the stdout (linters exit non-zero
-// when they report findings) treat the output as authoritative.
-type Command func(ctx context.Context, name RunnerName, args ...Arg) ([]byte, error)
-
-// ExecCommand is the default Command, executing a real subprocess. On failure the
-// returned error wraps ErrExec with the captured stderr so the underlying reason
-// (config error, panic, load failure) reaches the caller's message.
-func ExecCommand(ctx context.Context, name RunnerName, args ...Arg) ([]byte, error) {
-	bin, list := string(name), stringArgs(args)
-	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, bin, list...)
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return out, ErrExec.With(err, "stderr", strings.TrimSpace(stderr.String()))
-	}
-	return out, nil
-}
-
-// stringArgs converts typed arguments to the plain strings exec expects.
-func stringArgs(args []Arg) []string {
-	out := make([]string, len(args))
-	for i, a := range args {
-		out[i] = string(a)
-	}
-	return out
-}
-
 // Argument placeholders substituted in a RunnerSpec's Args at run time.
 const (
 	placeholderRoot   = "{root}"
 	placeholderConfig = "{config}"
+	// placeholderCache, in a RunnerSpec's Env entries, expands to a fresh
+	// per-invocation temporary directory removed when the run finishes. It
+	// exists so a tool's result cache can be made hermetic: a shared mutable
+	// cache is a channel through which a stale entry silently suppresses a
+	// real finding (observed in the field — a poisoned global golangci-lint
+	// cache hid a genuine exhaustive violation across many runs until the
+	// file's content changed), and a gate that can be greened by ambient
+	// state is not a gate.
+	placeholderCache = "{cache}"
 )
 
 // ParserName selects the output parser a runner's stdout is read with.
@@ -91,6 +63,10 @@ const (
 	// is content-addressed and safe for concurrent runners, which is exactly why
 	// golangci ships this opt-out.
 	golangciParallelFlag = "--allow-parallel-runners"
+	// golangciCacheEnv is golangci-lint's cache-directory selector, bound to
+	// the `{cache}` placeholder in the default spec so each run gets a fresh
+	// hermetic cache instead of the shared global one.
+	golangciCacheEnv = "GOLANGCI_LINT_CACHE"
 )
 
 // ConfigSpec declares, as data, how a tool takes its configuration file: the base
@@ -114,6 +90,11 @@ type RunnerSpec struct {
 	Config  *ConfigSpec `yaml:"config"`
 	Command []string    `yaml:"command"`
 	Args    []string    `yaml:"args"`
+	// Env entries are appended to the subprocess environment, shadowing
+	// same-keyed ambient values. An entry may carry the `{cache}` placeholder,
+	// which expands to a fresh per-invocation temporary directory (removed
+	// after the run) — the hermetic-cache seam.
+	Env []string `yaml:"env"`
 }
 
 // Parser turns a tool's stdout into normalized diagnostics. A non-nil error means
@@ -149,6 +130,11 @@ func DefaultRunnerSpecs() map[string]RunnerSpec {
 			Args:    []string{golangciJSONFlag, golangciParallelFlag, placeholderConfig, "--", placeholderRoot},
 			Format:  ParserGolangciJSON,
 			Config:  &ConfigSpec{Base: []string{golangciBaseYAML, golangciBaseYML}, Flag: golangciCfgFlag},
+			// The issues cache is hermetic per invocation: golangci-lint's
+			// shared global cache is a channel through which a stale entry
+			// can silently green the gate (see placeholderCache), so every
+			// run analyzes from scratch in its own throwaway cache.
+			Env: []string{golangciCacheEnv + "=" + placeholderCache},
 		},
 	}
 }
@@ -234,8 +220,13 @@ func (r specRunner) Run(ctx context.Context, root Root) ([]goyze.Diagnostic, err
 		return nil, ErrRunnerFailed.With(err, "runner", r.spec.Name)
 	}
 	defer cleanup()
+	env, envCleanup, err := resolveEnv(r.spec.Env)
+	if err != nil {
+		return nil, ErrRunnerFailed.With(err, "runner", r.spec.Name)
+	}
+	defer envCleanup()
 	name, args := r.argv(root, configArgs)
-	out, execErr := r.command(ctx, name, args...)
+	out, execErr := r.command(ctx, name, env, args...)
 	diags, parseErr := r.parser(out)
 	if parseErr != nil {
 		return nil, ErrRunnerFailed.With(firstError(execErr, parseErr), "runner", r.spec.Name)

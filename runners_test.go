@@ -13,7 +13,7 @@ import (
 )
 
 func fakeCommand(out string, err error) stickler.Command {
-	return func(context.Context, stickler.RunnerName, ...stickler.Arg) ([]byte, error) {
+	return func(context.Context, stickler.RunnerName, []stickler.EnvVar, ...stickler.Arg) ([]byte, error) {
 		return []byte(out), err
 	}
 }
@@ -21,7 +21,7 @@ func fakeCommand(out string, err error) stickler.Command {
 // capturingCommand records the arguments it is called with so a test can assert
 // how a runner builds its command line.
 func capturingCommand(out string, err error, gotArgs *[]stickler.Arg) stickler.Command {
-	return func(_ context.Context, _ stickler.RunnerName, args ...stickler.Arg) ([]byte, error) {
+	return func(_ context.Context, _ stickler.RunnerName, _ []stickler.EnvVar, args ...stickler.Arg) ([]byte, error) {
 		*gotArgs = args
 		return []byte(out), err
 	}
@@ -79,23 +79,6 @@ func TestYzeSpecSubstitutesRootAfterDoubleDash(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []stickler.Arg{"--format", "stickler-json", "--", "-x"}, got)
-}
-
-func TestExecCommandSurfacesStderrInError(t *testing.T) {
-	_, err := stickler.ExecCommand(context.Background(), "sh", "-c", "printf 'the real reason' 1>&2; exit 7")
-
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, stickler.ErrExec))
-	assert.Contains(t, err.Error(), "the real reason")
-}
-
-func TestExecCommandRunsRealProcess(t *testing.T) {
-	out, err := stickler.ExecCommand(context.Background(), "go", "version")
-	require.NoError(t, err)
-	assert.Contains(t, string(out), "go version")
-
-	_, err = stickler.ExecCommand(context.Background(), "stickler-no-such-binary-xyz")
-	require.Error(t, err)
 }
 
 func TestBuildRunnersSelectsKnownAndIgnoresUnknown(t *testing.T) {

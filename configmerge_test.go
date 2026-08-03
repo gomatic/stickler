@@ -245,7 +245,7 @@ func TestGolangciRunnerSurfacesEffectiveConfigError(t *testing.T) {
 		Read:      fakeReader(map[string][]byte{"/repo/.golangci.yaml": []byte("\tbad")}),
 		Temp:      captureTemp(new([]byte)),
 	}
-	command := func(context.Context, RunnerName, ...Arg) ([]byte, error) { return nil, nil }
+	command := func(context.Context, RunnerName, []EnvVar, ...Arg) ([]byte, error) { return nil, nil }
 	_, err := golangciSpecRunner(command, merger).Run(context.Background(), ".")
 	assert.ErrorIs(t, err, ErrRunnerFailed)
 }
@@ -261,7 +261,7 @@ func TestGolangciRunnerPassesConfigFlag(t *testing.T) {
 		Read:      fakeReader(nil),
 		Temp:      captureTemp(new([]byte)),
 	}
-	command := func(_ context.Context, _ RunnerName, args ...Arg) ([]byte, error) {
+	command := func(_ context.Context, _ RunnerName, _ []EnvVar, args ...Arg) ([]byte, error) {
 		gotArgs = args
 		return []byte(`{"Issues":[],"Report":{}}`), nil
 	}
