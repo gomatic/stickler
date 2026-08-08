@@ -108,12 +108,45 @@ func TestBinariesExemptionsAndNonFindings(t *testing.T) {
 
 // TestBinariesUnreadableTrackedFileIsNotAFinding pins fail-open on a file the
 // check cannot read: a finding it could not verify is not a finding.
+//
+// The unreadability is a DIRECTORY at the tracked path, not a chmod. Permission
+// bits do not constrain uid 0, and CI runs as root inside the gate image — so
+// `chmod 0o000` left the file perfectly readable there, the ELF magic was
+// classified exactly as it would be in the happy path, and the test failed on a
+// finding it asserted was absent. It could only ever have passed on a
+// developer's unprivileged machine.
+//
+// os.Open succeeds on a directory; the subsequent Read fails with EISDIR, for
+// every uid including root. That keeps the test on the real filesystem — the
+// path genuinely cannot be read — rather than stubbing the reader, and it
+// exercises the same error return the permission case was reaching for.
 func TestBinariesUnreadableTrackedFileIsNotAFinding(t *testing.T) {
 	t.Parallel()
 
 	dir := initRepo(t, map[string][]byte{"sealed": withMagic([]byte{0x7f, 'E', 'L', 'F', 2, 1, 1, 0})})
-	require.NoError(t, os.Chmod(filepath.Join(dir, "sealed"), 0o000))
-	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "sealed"), 0o644) })
+	sealed := filepath.Join(dir, "sealed")
+	require.NoError(t, os.Remove(sealed))
+	require.NoError(t, os.Mkdir(sealed, 0o755))
+
+	diags, err := binariesRunner{}.Run(context.Background(), Root(dir))
+
+	require.NoError(t, err)
+	assert.Empty(t, diags)
+}
+
+// TestBinariesTrackedFileMissingFromWorktreeIsNotAFinding covers the OTHER way
+// readMagic gives up: os.Open itself failing, rather than the Read after it.
+//
+// git lists paths from the index, so a tracked file deleted from the worktree
+// is still handed to the classifier. That is an ENOENT on open, and like the
+// EISDIR case above it holds for every uid — which the permission-bit version
+// it replaced did not. Both branches of readMagic's error handling are now
+// reached by a condition the OS actually produces.
+func TestBinariesTrackedFileMissingFromWorktreeIsNotAFinding(t *testing.T) {
+	t.Parallel()
+
+	dir := initRepo(t, map[string][]byte{"gone": withMagic([]byte{0x7f, 'E', 'L', 'F', 2, 1, 1, 0})})
+	require.NoError(t, os.Remove(filepath.Join(dir, "gone")))
 
 	diags, err := binariesRunner{}.Run(context.Background(), Root(dir))
 
