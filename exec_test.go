@@ -27,3 +27,23 @@ func TestExecCommandRunsRealProcess(t *testing.T) {
 	_, err = stickler.ExecCommand(context.Background(), "stickler-no-such-binary-xyz", nil)
 	require.Error(t, err)
 }
+
+// TestExecCommandPassesEnvToTheChild asserts the env actually REACHES the
+// started process, which is the only thing the env parameter promises.
+//
+// Every existing test passed a nil env, so the whole len(env) > 0 path — and
+// the conversion behind it — never ran. Asserting the child's own view of the
+// variable is what makes this a contract test: a conversion that dropped or
+// mangled entries would still have built a []string and still have satisfied
+// any assertion made on the caller's side.
+func TestExecCommandPassesEnvToTheChild(t *testing.T) {
+	out, err := stickler.ExecCommand(
+		context.Background(),
+		"sh",
+		[]stickler.EnvVar{"STICKLER_TEST_VAR=reached-the-child"},
+		"-c", `printf %s "${STICKLER_TEST_VAR}"`,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "reached-the-child", string(out))
+}
