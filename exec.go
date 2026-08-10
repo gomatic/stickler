@@ -25,6 +25,10 @@ type EnvVar string
 // when they report findings) treat the output as authoritative.
 type Command func(ctx context.Context, name RunnerName, env []EnvVar, args ...Arg) ([]byte, error)
 
+// ExecCommand backs Command, and the assertion below is the compile-checked
+// evidence: composition roots bind it, tests substitute a failing one.
+var _ Command = ExecCommand
+
 // ExecCommand is the default Command, executing a real subprocess. On failure the
 // returned error wraps ErrExec with the captured stderr so the underlying reason
 // (config error, panic, load failure) reaches the caller's message.
