@@ -1,7 +1,13 @@
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/gomatic/go-app v0.7.3 h1:AuIQs/mI2tSaiJXuvo0mxeBxwLY3pQqWwYF7wmNdiEo=
+github.com/gomatic/go-app v0.7.3/go.mod h1:C0hQXWBwbwE9tKRWQjJsdo8uFtwJCzPOSsbRRQFfQT8=
 github.com/gomatic/go-error v0.3.15 h1:mvde+puXMhESGfa+CEGWYOKmfS7c8P9pe4JQjON8yxg=
 github.com/gomatic/go-error v0.3.15/go.mod h1:QVlrIcHreFp6u7n5UZiez8+eDllnV8eWP3vlDHSWnCo=
+github.com/gomatic/go-log v0.3.13 h1:7J5+0KDifkECdfNe26BER05esPCCtUVCsmGcvictWXU=
+github.com/gomatic/go-log v0.3.13/go.mod h1:gxjlU3zqKVxwSvwUR34AiqV501/h4fanaz/QmmXPsDU=
+github.com/gomatic/go-output v0.3.19 h1:T0E1DTxgue8PhUPFoB1RZcd9fPGCgz5z2u2JZQENTTc=
+github.com/gomatic/go-output v0.3.19/go.mod h1:nDRr9MQeN0z42lnGJI4CBizxnYktdt4qeVs22g7uKkk=
 github.com/gomatic/go-yze v0.10.6 h1:pVHy0GBErAHL7+mazvt1U/NpkcfDIn88PP6fKMSRmoY=
 github.com/gomatic/go-yze v0.10.6/go.mod h1:XIj1y8V5T3gjxoFHv3W9qmwDlYZPFPUj+ErxOsAKrVY=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=

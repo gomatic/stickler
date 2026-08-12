@@ -1,176 +1,117 @@
-// Command stickler is the gomatic lint runner: it executes the yze suite and
-// golangci-lint to completion, normalizes their findings, writes them to stderr
-// in the chosen format, and exits non-zero if any finding or tool error occurred.
 package main
 
 import (
 	"context"
-	"fmt"
-	"io"
+	"log/slog"
 	"os"
-	"time"
+	"os/signal"
+	"sort"
 
-	errs "github.com/gomatic/go-error"
+	app "github.com/gomatic/go-app"
+	"github.com/gomatic/go-log"
 	"github.com/urfave/cli/v3"
 
-	"github.com/gomatic/stickler"
+	"github.com/gomatic/stickler/internal/app/commands/lint"
 )
 
-// errFailed is returned by the action to drive a non-zero exit when the lint pass
-// failed (any finding or runner error).
-const errFailed errs.Const = "lint failures found"
+const (
+	argUsage    = ``
+	description = `stickler is the gomatic lint runner: it executes the configured checks to
+completion, normalizes their findings into one diagnostic schema, and reports
+pass or fail through the process exit code.
 
-// appName is the CLI name.
-const appName = "stickler"
+A tool is DATA. Which checkers run, how each is invoked, how its configuration
+is merged, and how its output is parsed are all declared in .stickler.yaml
+layered over the global configuration — never in Go. The only per-tool code
+stickler carries is an output parser.
 
-// version is the application version, exposed via --version. It defaults to "dev"
-// and is overwritten at build time via ldflags: -X main.version={{.Version}}
-// (see .goreleaser.yml).
+Available Commands:
+  lint    - Run the suite over a root (the default; "stickler ./..." is "stickler lint ./...")
+
+Findings that are not softened fail the build. A softened rule is still
+reported and still counted, against a committed per-rule baseline that may only
+fall — so a soft rule is non-blocking, never invisible.`
+	envName   = "STICKLER"
+	envPrefix = envName + "_"
+	name      = `stickler`
+	usage     = `Run the gomatic lint suite and report via exit code.`
+)
+
+var (
+	appCreator    = createApp
+	loggerConfig  log.LoggerConfig
+	loggerCreator = productionLogger
+)
+
+// productionLogger builds the application logger from the parsed logging flags.
+// It is invoked from the root Before hook, after flag parsing has populated
+// loggerConfig, so --log-level and --log-format take effect.
+func productionLogger(_ *cli.Command) *slog.Logger {
+	return loggerConfig.NewLogger(os.Stderr)
+}
+
+// version is the application version.
+// Set via ldflags: -X main.version=1.0.0
 var version = "dev"
 
-// defaultTimeout bounds an entire lint pass so a wedged linter cannot hang the run
-// forever; it is overridable with --timeout.
-const defaultTimeout = 5 * time.Minute
-
-// Indirected dependencies, so tests supply fake runners and config instead of
-// spawning real subprocesses or reading real files.
-var (
-	osExit       = os.Exit
-	getenv       = os.Getenv
-	userHomeDir  = os.UserHomeDir
-	readFile     = os.ReadFile
-	buildRunners = defaultBuildRunners
-)
-
-// defaultBuildRunners builds the configured runners over real subprocesses, giving
-// each config-file runner the context it needs to merge its effective config.
-func defaultBuildRunners(
-	specs map[string]stickler.RunnerSpec, names []string, ctx stickler.RunnerContext,
-) ([]stickler.Runner, error) {
-	return stickler.BuildRunners(stickler.ExecCommand, specs, names, ctx)
-}
+// osExit is indirected so tests can observe the process exit code.
+var osExit = os.Exit
 
 func main() { osExit(run(os.Args)) }
 
-// run builds and executes the CLI, returning the process exit code.
+// run builds and executes the CLI, returning the process exit code. Keeping the
+// exit code as a return value (rather than calling os.Exit here) makes the whole
+// run path testable.
 func run(args []string) int {
-	if err := createApp().Run(context.Background(), args); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, appName+":", err)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+	defer cancel()
+
+	if err := appCreator(loggerCreator).Run(ctx, args); err != nil {
+		slog.Error("Application error", "error", err)
 		return 1
 	}
 	return 0
 }
 
-// createApp constructs the stickler CLI. The normalized report is written to
-// stdout (so machine formats pipe cleanly); the pass/fail status line is written
-// to stderr by run(). The ExitErrHandler is neutralized so Run returns errors.
-func createApp() *cli.Command {
-	return &cli.Command{
-		Name:           appName,
-		Version:        version,
-		Usage:          "run the gomatic lint suite and report via exit code",
-		ArgsUsage:      "[root]",
-		ExitErrHandler: func(context.Context, *cli.Command, error) {},
+// createApp constructs the definition of the CLI.
+func createApp(getLogger app.GetLoggerFunc) *cli.Command {
+	cliApp := &cli.Command{
+		Name:                  name,
+		Usage:                 usage,
+		ArgsUsage:             argUsage,
+		Description:           description,
+		Version:               version,
+		EnableShellCompletion: true,
+		// Every CI job invokes the bare `stickler [root]`. urfave prepends the
+		// default command to the positional args, so that invocation keeps
+		// meaning `stickler lint [root]` now that the tool has a command tree.
+		DefaultCommand: lint.Name,
+		Commands: []*cli.Command{
+			lint.Command(),
+		},
+		Before: func(ctx context.Context, c *cli.Command) (context.Context, error) {
+			c.Root().Metadata[app.LoggerMetadataKey] = getLogger(c)
+			return ctx, nil
+		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:    "format",
-				Value:   "",
-				Sources: cli.EnvVars("STICKLER_FORMAT"),
-				Usage:   "output format (human, json, github, sarif); overrides config",
+				Name:        "log-level",
+				Sources:     cli.EnvVars(envPrefix + "LOG_LEVEL"),
+				Value:       "info",
+				Usage:       "Set the logging level (debug, info, warn, error)",
+				Destination: (*string)(&loggerConfig.Level),
 			},
 			&cli.StringFlag{
-				Name:    "root",
-				Value:   "",
-				Sources: cli.EnvVars("STICKLER_ROOT"),
-				Usage:   "directory whose .stickler.yaml is loaded (default: the target)",
-			},
-			&cli.DurationFlag{
-				Name:    "timeout",
-				Value:   defaultTimeout,
-				Sources: cli.EnvVars("STICKLER_TIMEOUT"),
-				Usage:   "maximum duration for the whole lint pass",
+				Name:        "log-format",
+				Sources:     cli.EnvVars(envPrefix + "LOG_FORMAT"),
+				Value:       "text",
+				Usage:       "Set the log output format (text, json)",
+				Destination: (*string)(&loggerConfig.Format),
 			},
 		},
-		Action: action,
 	}
-}
 
-// action loads configuration, runs the configured tools under an overall timeout,
-// renders the result, and signals failure via errFailed.
-func action(ctx context.Context, cmd *cli.Command) error {
-	ctx, cancel := context.WithTimeout(ctx, cmd.Duration("timeout"))
-	defer cancel()
-	root := rootOf(cmd.Args().Slice())
-	repoRoot := configRoot(stickler.RepoRoot(cmd.String("root")), root)
-	resolved, err := configure(repoRoot)
-	if err != nil {
-		return err
-	}
-	runnerCtx := stickler.RunnerContext{BaseDir: string(repoRoot), Config: resolved.Config}
-	specs := stickler.MergeSpecs(stickler.DefaultRunnerSpecs(), resolved.Define)
-	runners, err := buildRunners(specs, resolved.Runners, runnerCtx)
-	if err != nil {
-		return err
-	}
-	result := stickler.Orchestrate(ctx, root, runners)
-	format := chooseFormat(stickler.OutputFormat(cmd.String("format")), stickler.OutputFormat(resolved.Format))
-	if err := stickler.Format(cmd.Writer, format, result); err != nil {
-		return err
-	}
-	reportOverages(cmd.Root().ErrWriter, result.OverBaseline(stickler.Soft(resolved.Soft), resolved.SoftBaseline))
-	if result.Failed(stickler.Soft(resolved.Soft), resolved.SoftBaseline) {
-		return errFailed
-	}
-	return nil
-}
+	sort.Sort(cli.FlagsByName(cliApp.Flags))
 
-// reportOverages names each soft rule that has grown past its committed
-// baseline. A bare "failed" would leave the reader to diff two counts by hand,
-// and the whole point of the ratchet is that growth is visible.
-func reportOverages(out io.Writer, overages []stickler.Overage) {
-	for _, over := range overages {
-		_, _ = fmt.Fprintf(out, "%s: %d soft findings, baseline %d — fix one or raise the baseline deliberately\n",
-			over.Rule, over.Count, over.Baseline)
-	}
-}
-
-// configure loads and resolves the global and repo configuration layers.
-func configure(repoRoot stickler.RepoRoot) (stickler.Resolved, error) {
-	home, _ := userHomeDir()
-	layers, err := stickler.LoadLayers(readFile, stickler.ConfigPaths(getenv, stickler.HomeDir(home), repoRoot)...)
-	if err != nil {
-		return stickler.Resolved{}, err
-	}
-	return stickler.Resolve(layers...), nil
-}
-
-// configRoot is the directory whose .stickler.yaml applies: the explicit --root,
-// else the current directory (a package pattern is not a config directory).
-func configRoot(flag stickler.RepoRoot, target stickler.Root) stickler.RepoRoot {
-	if flag != "" {
-		return flag
-	}
-	if target == "./..." {
-		return "."
-	}
-	return stickler.RepoRoot(target)
-}
-
-// chooseFormat applies the precedence flag > config > human.
-func chooseFormat(flag, configured stickler.OutputFormat) stickler.OutputFormat {
-	if flag != "" {
-		return flag
-	}
-	if configured != "" {
-		return configured
-	}
-	return stickler.OutputHuman
-}
-
-// rootOf defaults to the whole module when no root is named.
-func rootOf(args []string) stickler.Root {
-	if len(args) == 0 {
-		return "./..."
-	}
-	return stickler.Root(args[0])
+	return cliApp
 }

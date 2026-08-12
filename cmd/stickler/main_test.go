@@ -3,276 +3,94 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
-	"strings"
 	"testing"
 
-	errs "github.com/gomatic/go-error"
-	goyze "github.com/gomatic/go-yze"
+	app "github.com/gomatic/go-app"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 
-	"github.com/gomatic/stickler"
+	"github.com/gomatic/stickler/internal/app/commands/lint"
 )
 
-type fakeRunner struct {
-	err   error
-	diags []goyze.Diagnostic
-}
-
-func (fakeRunner) Name() string { return "fake" }
-
-func (f fakeRunner) Run(context.Context, stickler.Root) ([]goyze.Diagnostic, error) {
-	return f.diags, f.err
-}
-
-// blockingRunner blocks until the context is cancelled, then returns the context
-// error — it lets a test prove the overall timeout cancels a wedged linter.
-type blockingRunner struct{}
-
-func (blockingRunner) Name() string { return "block" }
-
-func (blockingRunner) Run(ctx context.Context, _ stickler.Root) ([]goyze.Diagnostic, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-func swapReadFile(t *testing.T, content string, err error) {
-	t.Helper()
-	original := readFile
-	t.Cleanup(func() { readFile = original })
-	readFile = func(string) ([]byte, error) {
-		if err != nil {
-			return nil, err
-		}
-		return []byte(content), nil
-	}
-}
-
-func swapRunners(t *testing.T, runners ...stickler.Runner) {
-	t.Helper()
-	original := buildRunners
-	t.Cleanup(func() { buildRunners = original })
-	buildRunners = func(
-		map[string]stickler.RunnerSpec, []string, stickler.RunnerContext,
-	) ([]stickler.Runner, error) {
-		return runners, nil
-	}
-	swapReadFile(t, "", errs.Const("no config")) // hermetic: no config files
-}
-
+// runApp executes the assembled CLI, capturing what it writes.
 func runApp(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	app := createApp()
+	cliApp := createApp(app.GetLogger)
 	var buf bytes.Buffer
-	app.Writer = &buf
-	err := app.Run(context.Background(), args)
+	cliApp.Writer = &buf
+	err := cliApp.Run(context.Background(), args)
 	return buf.String(), err
 }
 
 func TestVersionFlagReportsVersion(t *testing.T) {
-	out, err := runApp(t, appName, "--version")
+	out, err := runApp(t, name, "--version")
 
 	require.NoError(t, err)
 	assert.Contains(t, out, version)
 }
 
-func TestActionCleanRunSucceeds(t *testing.T) {
-	swapRunners(t, fakeRunner{})
+// TestBareInvocationRunsLint pins the compatibility contract every CI job
+// depends on: `stickler` and `stickler <root>` still mean a lint pass now that
+// the tool has a command tree, because urfave prepends the default command to
+// the positional arguments.
+func TestBareInvocationRunsLint(t *testing.T) {
+	t.Parallel()
+	cliApp := createApp(app.GetLogger)
 
-	out, err := runApp(t, appName)
-
-	require.NoError(t, err)
-	assert.Empty(t, out)
+	assert.Equal(t, lint.Name, cliApp.DefaultCommand,
+		"without this, a bare `stickler` would print help and exit zero — a gate that silently stopped gating")
+	assert.NotNil(t, cliApp.Command(lint.Name), "the default command must exist")
 }
 
-func TestActionReportsFindingsAndFails(t *testing.T) {
-	swapRunners(t, fakeRunner{diags: []goyze.Diagnostic{
-		{Path: "a.go", Line: 3, Col: 2, Severity: goyze.SeverityError, Message: "boom", Rule: "yze/gotostmt"},
-	}})
+// TestGlobalFlagsAreSortedAndBindEnvironment pins the uniform root: the shared
+// logging flags, each reachable from the environment, in a stable help order.
+func TestGlobalFlagsAreSortedAndBindEnvironment(t *testing.T) {
+	t.Parallel()
+	flags := createApp(app.GetLogger).Flags
+	require.Len(t, flags, 2)
 
-	out, err := runApp(t, appName)
-
-	require.Error(t, err)
-	assert.Contains(t, out, "a.go:3:2: boom [error] (yze/gotostmt)")
-}
-
-func TestActionRunnerErrorFails(t *testing.T) {
-	swapRunners(t, fakeRunner{err: errs.Const("tool crashed")})
-
-	_, err := runApp(t, appName)
-
-	require.Error(t, err)
-}
-
-func TestActionRejectsUnknownFormat(t *testing.T) {
-	swapRunners(t, fakeRunner{})
-
-	_, err := runApp(t, appName, "--format", "nope")
-
-	require.Error(t, err)
-}
-
-func TestActionUsesConfiguredRunnersAndFormat(t *testing.T) {
-	var gotNames []string
-	originalBuild := buildRunners
-	t.Cleanup(func() { buildRunners = originalBuild })
-	buildRunners = func(_ map[string]stickler.RunnerSpec, names []string, _ stickler.RunnerContext) ([]stickler.Runner, error) {
-		gotNames = names
-		return []stickler.Runner{
-			fakeRunner{diags: []goyze.Diagnostic{{Path: "a.go", Rule: "yze/gotostmt", Message: "x"}}},
-		}, nil
+	assert.Equal(t, "log-format", flags[0].Names()[0], "flags are sorted for a stable --help")
+	assert.Equal(t, "log-level", flags[1].Names()[0])
+	for _, f := range flags {
+		assert.NotEmpty(t, f.(cli.DocGenerationFlag).GetEnvVars())
 	}
-	swapReadFile(t, "runners: [yze]\nformat: json\n", nil)
-
-	out, err := runApp(t, appName)
-
-	require.Error(t, err) // findings -> fail
-	assert.Equal(t, []string{"yze"}, gotNames)
-	assert.Contains(t, out, `"diagnostics"`) // config format json
 }
 
-func TestActionTimeoutCancelsWedgedRunner(t *testing.T) {
-	swapRunners(t, blockingRunner{})
+// TestBeforeHookPublishesTheLogger pins the convention every command action
+// reads through: the logger is built after flag parsing and left in the root
+// metadata, so `--log-level` reaches the domain tier.
+func TestBeforeHookPublishesTheLogger(t *testing.T) {
+	cliApp := createApp(loggerCreator)
+	require.NotNil(t, cliApp.Before)
+	// urfave's own setup does this before it calls Before (command_setup.go);
+	// the hook is exercised here without a full run, so the test establishes
+	// the same precondition.
+	cliApp.Metadata = map[string]any{}
 
-	out, err := runApp(t, appName, "--timeout", "10ms")
-
-	require.Error(t, err)
-	assert.Contains(t, out, "context deadline exceeded", "the overall timeout must cancel a wedged linter")
-}
-
-func TestActionReportsConfigError(t *testing.T) {
-	swapReadFile(t, "runners: : :\n", nil)
-
-	_, err := runApp(t, appName)
-
-	require.Error(t, err)
-}
-
-func TestDefaultBuildRunners(t *testing.T) {
-	runners, err := defaultBuildRunners(stickler.DefaultRunnerSpecs(), nil, stickler.RunnerContext{})
+	_, err := cliApp.Before(context.Background(), cliApp)
 
 	require.NoError(t, err)
-	require.Len(t, runners, 4)
-	assert.Equal(t, "binaries", runners[0].Name())
-	assert.Equal(t, "clilayout", runners[1].Name())
-	assert.Equal(t, "golangci-lint", runners[2].Name())
-	assert.Equal(t, "yze", runners[3].Name())
-}
-
-func TestConfigRoot(t *testing.T) {
-	assert.Equal(t, stickler.RepoRoot("/explicit"), configRoot("/explicit", "pkg/x"))
-	assert.Equal(t, stickler.RepoRoot("."), configRoot("", "./..."))
-	assert.Equal(t, stickler.RepoRoot("pkg/x"), configRoot("", "pkg/x"))
-}
-
-func TestChooseFormat(t *testing.T) {
-	assert.Equal(t, stickler.OutputFormat("github"), chooseFormat("github", "json"))
-	assert.Equal(t, stickler.OutputFormat("json"), chooseFormat("", "json"))
-	assert.Equal(t, stickler.OutputHuman, chooseFormat("", ""))
-}
-
-func TestRootOfDefaultsToModule(t *testing.T) {
-	assert.Equal(t, stickler.Root("./..."), rootOf(nil))
-	assert.Equal(t, stickler.Root("pkg/x"), rootOf([]string{"pkg/x"}))
+	assert.NotNil(t, cliApp.Metadata[app.LoggerMetadataKey])
+	assert.NotNil(t, productionLogger(cliApp), "the production logger is buildable")
 }
 
 func TestRunExitCodes(t *testing.T) {
-	swapRunners(t, fakeRunner{})
-	assert.Equal(t, 0, run([]string{appName}))
-
-	swapRunners(t, fakeRunner{diags: []goyze.Diagnostic{{Path: "a.go", Message: "x"}}})
-	assert.Equal(t, 1, run([]string{appName}))
+	assert.Equal(t, 0, run([]string{name, "--version"}))
+	assert.Equal(t, 1, run([]string{name, "--not-a-flag"}), "a failing run must exit non-zero")
 }
 
 func TestMainExits(t *testing.T) {
-	swapRunners(t, fakeRunner{})
-	originalExit, originalArgs := osExit, os.Args
-	t.Cleanup(func() { osExit, os.Args = originalExit, originalArgs })
+	originalExit, originalArgs, originalCreator := osExit, os.Args, appCreator
+	t.Cleanup(func() { osExit, os.Args, appCreator = originalExit, originalArgs, originalCreator })
 
 	var code int
 	osExit = func(c int) { code = c }
-	os.Args = []string{appName}
+	os.Args = []string{name, "--version"}
+	appCreator = createApp
 
 	main()
 
 	assert.Equal(t, 0, code)
-}
-
-// TestReportOveragesNamesEachGrownRule pins that an overage report says which
-// rule grew and by how much. A bare "failed" would leave the reader to diff two
-// counts by hand, and a ratchet nobody can read is a ratchet nobody acts on.
-func TestReportOveragesNamesEachGrownRule(t *testing.T) {
-	t.Parallel()
-
-	var out strings.Builder
-	reportOverages(&out, []stickler.Overage{
-		{Rule: "yze/invariant", Count: 5, Baseline: 3},
-		{Rule: "yze/filesize", Count: 2, Baseline: 0},
-	})
-
-	got := out.String()
-	assert.Contains(t, got, "yze/invariant: 5 soft findings, baseline 3")
-	assert.Contains(t, got, "yze/filesize: 2 soft findings, baseline 0")
-}
-
-// TestReportOveragesIsSilentWhenNothingGrew pins that a run inside its baseline
-// prints nothing, so the report only ever appears when it means something.
-func TestReportOveragesIsSilentWhenNothingGrew(t *testing.T) {
-	t.Parallel()
-
-	var out strings.Builder
-	reportOverages(&out, nil)
-
-	assert.Empty(t, out.String())
-}
-
-// TestDefaultTimeoutBoundsAWedgedLintPass names defaultTimeout's claim. Every
-// runner is a subprocess, and a subprocess that never exits would otherwise
-// hang the job until the CI platform's own timeout kills it — with no output,
-// no partial result, and nothing naming the tool that wedged. The bound is what
-// turns that into a reported failure.
-//
-// The flag's default must be the constant, not a separately-written duration:
-// two places carrying the same number is how a bound gets raised in one of them
-// and silently stops applying.
-func TestDefaultTimeoutBoundsAWedgedLintPass(t *testing.T) {
-	assert.Positive(t, defaultTimeout, "an unbounded pass can hang a job indefinitely")
-
-	var found bool
-	for _, f := range createApp().Flags {
-		if d, ok := f.(*cli.DurationFlag); ok && d.Name == "timeout" {
-			found = true
-			assert.Equal(t, defaultTimeout, d.Value,
-				"the --timeout default must BE the constant, not a second copy of the number")
-		}
-	}
-	assert.True(t, found, "the timeout flag must exist, or the bound is unreachable")
-}
-
-// TestErrFailedIsTheSignalThatDrivesANonZeroExit names errFailed. It is the one
-// error that means "the lint pass ran correctly and found problems", as opposed
-// to "the lint pass itself broke" — and the two must stay distinguishable,
-// because a CI job that cannot tell them apart either ignores real findings or
-// treats a crashed linter as a clean run.
-func TestErrFailedIsTheSignalThatDrivesANonZeroExit(t *testing.T) {
-	assert.ErrorIs(t, errFailed, errFailed)
-	assert.NotErrorIs(t, errors.New("some other failure"), errFailed,
-		"an unrelated error must not be mistaken for a lint failure")
-	assert.NotEqual(t, 0, run([]string{appName, "--format", "not-a-format"}),
-		"a failing run must exit non-zero")
-}
-
-// TestActionFailsLoudOnUnknownRunner pins the wiring end to end: a config
-// selecting a runner nothing defines is an execution error naming it, not a
-// silent pass over zero runners.
-func TestActionFailsLoudOnUnknownRunner(t *testing.T) {
-	swapReadFile(t, "runners: [no-such-runner]\n", nil)
-
-	_, err := runApp(t, appName)
-
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, stickler.ErrUnknownRunner))
 }
