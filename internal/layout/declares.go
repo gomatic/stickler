@@ -1,120 +1,20 @@
-package clilayout
+package layout
 
-// Collecting the tier trees: one filesystem walk parses every non-test Go
-// file beneath a tier marker and records which packages declare themselves —
-// a command entry point on the app side, the Config/Result/Run contract on
-// the domain side.
+// What a file DECLARES, and whether it counts. Kept apart from the walk that
+// finds the files, because these are questions about one file's syntax — does
+// it declare a command entry point, does it declare the domain contract, and is
+// it part of the default build at all — while the walk knows only paths.
 
 import (
 	"go/ast"
 	"go/build/constraint"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"github.com/gomatic/stickler/internal/suite"
 )
-
-// tierTree is every self-declaring package of each tier, by pair key.
-type tierTree struct {
-	commands map[pairKey]tierDecl
-	domains  map[pairKey]tierDecl
-}
-
-// collectTiers walks the module once, parsing every non-test Go file beneath a
-// tier marker and recording the packages that declare themselves.
-func collectTiers(dir suite.Dir) (tierTree, error) {
-	tree := tierTree{commands: map[pairKey]tierDecl{}, domains: map[pairKey]tierDecl{}}
-	err := filepath.WalkDir(string(dir), func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return skipDir(sourcePath(path), dir, dirName(entry.Name()))
-		}
-		if isSourceFile(sourcePath(path)) {
-			tree.record(sourcePath(filepath.ToSlash(path)))
-		}
-		return nil
-	})
-	return tree, err
-}
-
-// dirName is one directory's base name during the walk.
-type dirName string
-
-// The directory names the go tool ignores wholesale.
-const (
-	dirTestdata dirName = "testdata"
-	dirVendor   dirName = "vendor"
-)
-
-// skipDir prunes the directories the go tool itself ignores — testdata,
-// vendor, and hidden or underscore-prefixed names — so an analyzer repo's own
-// fixtures are not judged as its layout. The walk root is exempt: walking "."
-// must not skip everything.
-func skipDir(path sourcePath, root suite.Dir, name dirName) error {
-	if string(path) == string(root) {
-		return nil
-	}
-	if name == dirTestdata || name == dirVendor ||
-		strings.HasPrefix(string(name), ".") || strings.HasPrefix(string(name), "_") {
-		return fs.SkipDir
-	}
-	return nil
-}
-
-// isSourceFile reports whether path names a non-test Go source file.
-func isSourceFile(path sourcePath) bool {
-	return strings.HasSuffix(string(path), ".go") && !strings.HasSuffix(string(path), "_test.go")
-}
-
-// record parses one source file and records its package's self-declaration, if
-// the file lies beneath a tier marker and declares the tier's shape. A file's
-// tier is decided by the FIRST marker on its path: a helper tree that happens
-// to nest the other tier's marker beneath a command or domain package
-// (commands/greet/internal/domain/help) belongs to the OUTER tier — where the
-// self-declaration gate judges it — never to a phantom inner one whose
-// counterpart path would be nonsense.
-func (t tierTree) record(path sourcePath) {
-	commandKey, isCommand := markerKey(path, commandsMarker)
-	domainKey, isDomain := markerKey(path, domainMarker)
-	if isCommand && isDomain {
-		isDomain = markerIndex(path, domainMarker) < markerIndex(path, commandsMarker)
-		isCommand = !isDomain
-	}
-	if isCommand {
-		recordDecl(t.commands, commandKey, path, declaresCommand)
-	}
-	if isDomain {
-		recordDecl(t.domains, domainKey, path, declaresContract)
-	}
-}
-
-// markerIndex is the position of the marker's first occurrence in path.
-func markerIndex(path sourcePath, marker tierMarker) int {
-	return strings.Index(string(path), string(marker))
-}
-
-// markerKey extracts the pair key for a file beneath the given tier marker:
-// the prefix before internal/ joined with the package path beneath the marker.
-// A file directly in the marker directory (the shared domain vocabulary
-// package) has no verb path and is not a pair.
-func markerKey(path sourcePath, marker tierMarker) (pairKey, bool) {
-	prefix, rest, found := strings.Cut(string(path), string(marker))
-	if !found || (prefix != "" && !strings.HasSuffix(prefix, "/")) {
-		return pairKey{}, false
-	}
-	verb := rest[:max(strings.LastIndex(rest, "/"), 0)]
-	if verb == "" {
-		return pairKey{}, false
-	}
-	return pairKey{prefix: prefix, verb: verb}, true
-}
 
 // declKind decides whether one parsed file declares its tier's shape, returning
 // the declaration's line when it does.
@@ -126,7 +26,7 @@ type declKind func(file *ast.File, fset *token.FileSet) (int, bool)
 // it from the default build — a //go:build ignore file is not part of the
 // layout, so its declarations must not conjure a verb demanding a
 // counterpart. The first declaring file anchors the package's diagnostics.
-func recordDecl(tier map[pairKey]tierDecl, key pairKey, path sourcePath, declares declKind) {
+func recordDecl(tier map[Key]Decl, key Key, path SourcePath, declares declKind) {
 	src, err := os.ReadFile(string(path))
 	if err != nil || buildExcluded(src) {
 		return
@@ -141,7 +41,7 @@ func recordDecl(tier map[pairKey]tierDecl, key pairKey, path sourcePath, declare
 		return
 	}
 	if _, exists := tier[key]; !exists {
-		tier[key] = tierDecl{path: path, line: line}
+		tier[key] = Decl{path: path, line: line}
 	}
 }
 
@@ -243,4 +143,99 @@ type declName string
 // declarations.
 func isContractName(name declName) bool {
 	return name == "Config" || name == "Result" || name == "Run"
+}
+
+// buildsCLICommand reports whether the file at path declares `package main`
+// AND constructs a urfave command. A file that cannot be parsed declares
+// nothing: this fails OPEN, because reporting "you have no command tier" on the
+// strength of a file that could not be read would be worse than silence.
+func buildsCLICommand(path SourcePath) bool {
+	file, err := parser.ParseFile(token.NewFileSet(), string(path), nil, parser.SkipObjectResolution)
+	if err != nil || file.Name == nil || file.Name.Name != "main" {
+		return false
+	}
+	alias, imported := cliAlias(file)
+	return imported && buildsCommand(file, alias)
+}
+
+// packageAlias is the local name a file refers to an imported package by.
+type packageAlias string
+
+// cliAlias returns the local name this file calls urfave/cli by — the explicit
+// alias when it has one, else the package name — and whether it imports it at
+// all.
+func cliAlias(file *ast.File) (packageAlias, bool) {
+	for _, imported := range file.Imports {
+		if imported.Path == nil || strings.Trim(imported.Path.Value, `"`) != cliModule {
+			continue
+		}
+		if imported.Name != nil {
+			return packageAlias(imported.Name.Name), true
+		}
+		return defaultCLIAlias, true
+	}
+	return "", false
+}
+
+// defaultCLIAlias is urfave/cli's package name, used when the import is not
+// aliased.
+const defaultCLIAlias packageAlias = "cli"
+
+// buildsCommand reports whether the file constructs a urfave Command value.
+// Constructing one is what makes a program a command TREE; a file that merely
+// names the type — a spec handed to a framework driver, a helper taking a
+// *cli.Command parameter — builds no tree and owns no verbs.
+func buildsCommand(file *ast.File, alias packageAlias) bool {
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		lit, ok := node.(*ast.CompositeLit)
+		if !ok || !isCommandType(lit.Type, alias) {
+			return !found
+		}
+		found = true
+		return false
+	})
+	return found
+}
+
+// isCommandType reports whether expr names urfave's Command type through
+// alias, seeing through the pointer and slice spellings a command tree is
+// actually written in: cli.Command, &cli.Command, and []*cli.Command are all
+// the same construction. Missing the slice form would exempt any program whose
+// tree is built as a literal list of subcommands.
+func isCommandType(expr ast.Expr, alias packageAlias) bool {
+	switch typed := expr.(type) {
+	case *ast.ArrayType:
+		return isCommandType(typed.Elt, alias)
+	case *ast.StarExpr:
+		return isCommandType(typed.X, alias)
+	case *ast.SelectorExpr:
+		return isCommandSelector(typed, alias)
+	}
+	return false
+}
+
+// isCommandSelector reports whether a qualified name is alias.Command.
+func isCommandSelector(selector *ast.SelectorExpr, alias packageAlias) bool {
+	if selector.Sel == nil || selector.Sel.Name != commandType {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && packageAlias(pkg.Name) == alias
+}
+
+// commandType is urfave/cli's command type name.
+const commandType = "Command"
+
+// cliModule is the import path a urfave/cli program is built from.
+const cliModule = "github.com/urfave/cli/v3"
+
+// recordProgram records one command-building main package, anchored at the
+// first such file seen in the package directory.
+func (t Tree) recordProgram(path SourcePath) {
+	dir := filepath.Dir(string(path))
+	if _, seen := t.programs[dir]; seen || !buildsCLICommand(path) {
+		return
+	}
+	t.programs[dir] = Program{path: path, dir: dir}
 }

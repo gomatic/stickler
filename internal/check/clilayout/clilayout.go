@@ -24,10 +24,10 @@ package clilayout
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	goyze "github.com/gomatic/go-yze"
 
+	"github.com/gomatic/stickler/internal/layout"
 	"github.com/gomatic/stickler/internal/suite"
 )
 
@@ -36,21 +36,6 @@ const (
 	Name = "clilayout"
 	Rule = "stickler/" + Name
 )
-
-// tierMarker is one of the layout's marker path segments.
-type tierMarker string
-
-// The tier markers, segment-bounded.
-const (
-	commandsMarker tierMarker = "internal/app/commands/"
-	domainMarker   tierMarker = "internal/domain/"
-)
-
-// sourcePath is the path of one Go source file under the walked root.
-type sourcePath string
-
-// tierDir is one tier's directory for a pair, spelled for a diagnostic.
-type tierDir string
 
 // messageFormat is one diagnostic message template.
 type messageFormat string
@@ -70,50 +55,30 @@ func (Runner) Name() string { return Name }
 
 // Run walks the module below root once and reports every unmatched verb.
 func (Runner) Run(_ context.Context, root suite.Root) ([]goyze.Diagnostic, error) {
-	tree, err := collectTiers(root.Dir())
+	tree, err := layout.Collect(root.Dir())
 	if err != nil {
 		return nil, err
 	}
-	return tree.unmatched(), nil
-}
-
-// pairKey identifies one corresponding command/domain pair: the tree prefix
-// holding the internal/ directory, and the verb path beneath the marker — kept
-// separate so parallel internal trees stay distinct and either tier's
-// directory can be spelled back for a diagnostic.
-type pairKey struct {
-	prefix string
-	verb   string
-}
-
-// commandDir and domainDir spell the key's directory in each tier.
-func (k pairKey) commandDir() tierDir { return tierDir(k.prefix + string(commandsMarker) + k.verb) }
-func (k pairKey) domainDir() tierDir  { return tierDir(k.prefix + string(domainMarker) + k.verb) }
-
-// tierDecl is what one package directory declares, and where — the anchor for
-// any diagnostic about it.
-type tierDecl struct {
-	path sourcePath
-	line int
+	return unmatched(tree), nil
 }
 
 // unmatched reports every verb missing its counterpart, in both directions. A
 // command package with a self-declaring command beneath it is a mount-only
 // parent and requires no domain verb of its own.
-func (t tierTree) unmatched() []goyze.Diagnostic {
-	return append(t.commandsWithoutDomains(), t.domainsWithoutCommands()...)
+func unmatched(tree layout.Tree) []goyze.Diagnostic {
+	return append(commandsWithoutDomains(tree), domainsWithoutCommands(tree)...)
 }
 
 // commandsWithoutDomains reports every leaf command package with no domain
 // verb behind it.
-func (t tierTree) commandsWithoutDomains() []goyze.Diagnostic {
+func commandsWithoutDomains(tree layout.Tree) []goyze.Diagnostic {
 	var diags []goyze.Diagnostic
-	for key, decl := range t.commands {
-		if t.isMountParent(key) {
+	for key, decl := range tree.Commands() {
+		if isMountParent(tree, key) {
 			continue
 		}
-		if _, ok := t.domains[key]; !ok {
-			diags = append(diags, diagnose(decl, messageNoDomain, key.commandDir(), key.domainDir()))
+		if _, ok := tree.Domains()[key]; !ok {
+			diags = append(diags, diagnose(decl, messageNoDomain, key.CommandDir(), key.DomainDir()))
 		}
 	}
 	return diags
@@ -121,11 +86,11 @@ func (t tierTree) commandsWithoutDomains() []goyze.Diagnostic {
 
 // domainsWithoutCommands reports every domain verb with no command package in
 // front of it.
-func (t tierTree) domainsWithoutCommands() []goyze.Diagnostic {
+func domainsWithoutCommands(tree layout.Tree) []goyze.Diagnostic {
 	var diags []goyze.Diagnostic
-	for key, decl := range t.domains {
-		if _, ok := t.commands[key]; !ok {
-			diags = append(diags, diagnose(decl, messageNoCommand, key.domainDir(), key.commandDir()))
+	for key, decl := range tree.Domains() {
+		if _, ok := tree.Commands()[key]; !ok {
+			diags = append(diags, diagnose(decl, messageNoCommand, key.DomainDir(), key.CommandDir()))
 		}
 	}
 	return diags
@@ -133,9 +98,9 @@ func (t tierTree) domainsWithoutCommands() []goyze.Diagnostic {
 
 // isMountParent reports whether another self-declaring command package lies
 // beneath key — the shape of a parent that only mounts subcommands.
-func (t tierTree) isMountParent(key pairKey) bool {
-	for other := range t.commands {
-		if other.prefix == key.prefix && strings.HasPrefix(other.verb, key.verb+"/") {
+func isMountParent(tree layout.Tree, key layout.Key) bool {
+	for other := range tree.Commands() {
+		if key.Nests(other) {
 			return true
 		}
 	}
@@ -144,12 +109,12 @@ func (t tierTree) isMountParent(key pairKey) bool {
 
 // diagnose builds the diagnostic for one unmatched verb, anchored at its
 // declaring file.
-func diagnose(decl tierDecl, message messageFormat, subject, counterpart tierDir) goyze.Diagnostic {
+func diagnose(decl layout.Decl, message messageFormat, subject, counterpart layout.TierDir) goyze.Diagnostic {
 	return goyze.Diagnostic{
 		Tool:     Name,
 		Rule:     Rule,
-		Path:     string(decl.path),
-		Line:     decl.line,
+		Path:     string(decl.Path()),
+		Line:     decl.Line(),
 		Col:      1,
 		Severity: goyze.SeverityError,
 		Message:  fmt.Sprintf(string(message), subject, counterpart),

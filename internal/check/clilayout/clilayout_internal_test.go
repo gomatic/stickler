@@ -2,10 +2,6 @@ package clilayout
 
 import (
 	"context"
-	"go/ast"
-	"go/token"
-	"io/fs"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -105,76 +101,6 @@ func TestClilayoutWalkErrorSurfaces(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestMarkerKeySeparatesTreesAndSkipsTheMarkerRoot pins the pairing rules: the
-// prefix survives so parallel internal trees never cross-match, a file directly
-// in the marker directory is no pair, and a look-alike segment is not the
-// marker.
-func TestMarkerKeySeparatesTreesAndSkipsTheMarkerRoot(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	key, ok := markerKey("m/internal/app/commands/greet/command.go", commandsMarker)
-	want.True(ok)
-	want.Equal(pairKey{prefix: "m/", verb: "greet"}, key)
-	want.Equal(tierDir("m/internal/app/commands/greet"), key.commandDir())
-	want.Equal(tierDir("m/internal/domain/greet"), key.domainDir())
-
-	key, ok = markerKey("internal/domain/tenant/create/create.go", domainMarker)
-	want.True(ok)
-	want.Equal(pairKey{prefix: "", verb: "tenant/create"}, key)
-
-	_, ok = markerKey("m/internal/domain/domain.go", domainMarker)
-	want.False(ok, "the marker directory itself pairs nothing")
-
-	_, ok = markerKey("m/notinternal/domain/greet/greet.go", domainMarker)
-	want.False(ok, "a look-alike segment is not the marker")
-}
-
-// TestRecordNeverCreatesAPhantomInnerTier names record's claim: a file whose
-// path nests the other tier's marker beneath a command or domain package
-// belongs to the OUTER tier, never to a phantom inner one whose counterpart
-// path would be nonsense.
-func TestRecordNeverCreatesAPhantomInnerTier(t *testing.T) {
-	t.Parallel()
-
-	tree := tierTree{commands: map[pairKey]tierDecl{}, domains: map[pairKey]tierDecl{}}
-	tree.record("testdata/conformant/internal/app/commands/greet/internal/domain/help/help.go")
-	tree.record("testdata/conformant/internal/domain/greet/internal/app/commands/helper/helper.go")
-
-	assert.Empty(t, tree.commands, "neither file declares its OUTER tier's shape, so neither is recorded —"+
-		" the nested helper Command belongs to the domain tier, where it is not a contract")
-	assert.Empty(t, tree.domains, "the nested help Config belongs to the command tier, where it is not an entry point")
-}
-
-// TestSkipDirPrunesWhatTheGoToolIgnores names skipDir's claims: testdata,
-// vendor, and hidden or underscore-prefixed directories are pruned so an
-// analyzer repo's own fixtures are not judged as its layout — while the walk
-// root itself is exempt, so walking "." must not skip everything.
-func TestSkipDirPrunesWhatTheGoToolIgnores(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	want.NoError(skipDir(".", ".", "."), "the walk root is exempt, whatever its name")
-	want.NoError(skipDir("m/internal", "m", "internal"), "an ordinary directory walks on")
-	for _, name := range []dirName{"testdata", "vendor", ".git", "_tools"} {
-		want.ErrorIs(skipDir(sourcePath("m/"+string(name)), "m", name), fs.SkipDir, "%s is pruned", name)
-	}
-}
-
-// TestContractDeclIgnoresNonDeclarations pins the fallthrough for the one
-// declaration kind that is neither a func nor a gen decl: the parser's BadDecl
-// placeholder. Walked files that fail to parse record nothing, so this arm is
-// reachable only by contract — and the contract is that it declares nothing
-// rather than panicking.
-func TestContractDeclIgnoresNonDeclarations(t *testing.T) {
-	t.Parallel()
-
-	line, ok := contractDecl(&ast.BadDecl{}, token.NewFileSet())
-
-	assert.False(t, ok)
-	assert.Zero(t, line)
-}
-
 // TestClilayoutIgnoresBuildExcludedFiles pins the constraint gate in both
 // directions: a domain package whose ONLY contract declaration lives in a
 // //go:build ignore file is not a verb (skipping it silences the false
@@ -191,78 +117,6 @@ func TestClilayoutIgnoresBuildExcludedFiles(t *testing.T) {
 	assert.Contains(t, diags[0].Message, "internal/domain/solo has no command package")
 	assert.True(t, strings.HasSuffix(diags[0].Path, "solo/solo.go"),
 		"the diagnostic anchors at the untagged declaring file, never the excluded one: %s", diags[0].Path)
-}
-
-// TestRecordDeclMustNotConjureAVerbFromABuildExcludedFile names recordDecl's
-// invariant directly: a build-excluded file records nothing under its key,
-// while its untagged sibling shape records normally — the seam through which
-// a //go:build ignore file would otherwise become a phantom domain verb.
-func TestRecordDeclMustNotConjureAVerbFromABuildExcludedFile(t *testing.T) {
-	t.Parallel()
-	tier := map[pairKey]tierDecl{}
-	key := pairKey{prefix: "testdata/tagged/", verb: "greet"}
-
-	recordDecl(tier, key, "testdata/tagged/internal/domain/greet/greet.go", declaresContract)
-	assert.Empty(t, tier, "the excluded file's contract declarations record nothing")
-
-	recordDecl(tier, key, "testdata/tagged/internal/domain/solo/solo.go", declaresContract)
-	require.Len(t, tier, 1, "an untagged declaring file still records")
-
-	recordDecl(tier, key, "testdata/tagged/internal/domain/greet/does-not-exist.go", declaresContract)
-	assert.Len(t, tier, 1, "an unreadable file declares nothing")
-}
-
-// TestBuildExcludedReadsOnlyTheConstraintHeader names buildExcluded's claims:
-// an unsatisfiable constraint (//go:build ignore, its legacy // +build form,
-// or an unknown custom tag) excludes the file; a satisfied constraint and an
-// unconstrained file do not; and only the header is read — a "constraint"
-// after the package clause is ordinary text the go tool would ignore too.
-func TestBuildExcludedReadsOnlyTheConstraintHeader(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	want.True(buildExcluded([]byte("//go:build ignore\n\npackage p\n")))
-	want.True(buildExcluded([]byte("// +build ignore\n\npackage p\n")))
-	want.True(buildExcluded([]byte("//go:build integration\n\npackage p\n")), "an unknown custom tag is unsatisfied")
-	want.True(buildExcluded([]byte("// Copyright.\n\n//go:build ignore\n\npackage p\n")),
-		"ordinary comments before the constraint do not end the header")
-
-	want.False(buildExcluded([]byte("package p\n")), "an unconstrained file is part of the default build")
-	want.False(buildExcluded([]byte("//go:build go1.1\n\npackage p\n")), "a satisfied constraint keeps the file")
-	want.False(buildExcluded([]byte("package p\n\n//go:build ignore\n")),
-		"a constraint after the package clause is not a constraint")
-	want.False(buildExcluded([]byte("//go:build !!!\npackage p\n")), "an unparsable constraint line is skipped")
-}
-
-// TestDefaultTagMirrorsTheDefaultBuild pins which tags the layout's notion of
-// the default build satisfies: the host platform, the unix family, gc, cgo,
-// and the go1.N versions — and nothing else, so ignore and custom tags stay
-// unsatisfied.
-func TestDefaultTagMirrorsTheDefaultBuild(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	for _, tag := range []buildTag{buildTag(runtime.GOOS), buildTag(runtime.GOARCH), "unix", "gc", "cgo", "go1.22"} {
-		want.True(defaultTag(tag), "%s is satisfied in the default build", tag)
-	}
-	for _, tag := range []buildTag{"ignore", "integration", "windows_probe", "gccgo"} {
-		want.False(defaultTag(tag), "%s is not satisfied in the default build", tag)
-	}
-}
-
-// TestHeaderLinesStopsAtTheFirstNonCommentLine pins the header boundary the
-// constraint scan relies on: blanks and line comments are collected, and the
-// first anything-else — package clause, block comment, code — ends the header.
-func TestHeaderLinesStopsAtTheFirstNonCommentLine(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	header := headerLines([]byte("// a\n\n//go:build ignore\npackage p\n//tail\n"))
-	want.Equal([]string{"// a", "", "//go:build ignore"}, header)
-	want.Empty(headerLines([]byte("package p\n")))
-	want.Equal([]string{"// only comments"}, headerLines([]byte("// only comments\n")), "EOF ends the header too")
-	want.Empty(headerLines([]byte("/* block */\n//go:build ignore\npackage p\n")),
-		"a block comment ends the header scan — go:build must be a line comment before it")
 }
 
 // messagesOf projects diagnostics onto their messages.

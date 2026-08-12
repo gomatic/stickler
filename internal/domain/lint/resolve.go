@@ -11,6 +11,7 @@ import (
 
 	"github.com/gomatic/stickler/internal/check/binaries"
 	"github.com/gomatic/stickler/internal/check/clilayout"
+	"github.com/gomatic/stickler/internal/check/clitiers"
 	"github.com/gomatic/stickler/internal/config"
 	"github.com/gomatic/stickler/internal/domain"
 	"github.com/gomatic/stickler/internal/report"
@@ -29,6 +30,7 @@ func build(resolved config.Resolved, repoRoot config.RepoRoot) ([]suite.Runner, 
 		Specs: config.MergeSpecs(config.DefaultRunnerSpecs(), resolved.Define),
 		Native: map[string]suite.Runner{
 			clilayout.Name: clilayout.Runner{},
+			clitiers.Name:  clitiers.Runner{},
 			binaries.Name:  binaries.Runner{},
 		},
 	}
