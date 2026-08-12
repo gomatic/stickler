@@ -13,6 +13,7 @@ const (
 	ErrConfig         errs.Const = "cannot load stickler config"
 	ErrExec           errs.Const = "command execution failed"
 	ErrLintFailed     errs.Const = "lint failures found"
+	ErrNoInstructions errs.Const = "runner cannot explain itself"
 	ErrRunner         errs.Const = "lint runner failed"
 	ErrRunnerFailed   errs.Const = "runner failed"
 	ErrUnknownOutput  errs.Const = "unknown output format"

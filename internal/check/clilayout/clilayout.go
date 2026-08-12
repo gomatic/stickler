@@ -120,3 +120,30 @@ func diagnose(decl layout.Decl, message messageFormat, subject, counterpart layo
 		Message:  fmt.Sprintf(string(message), subject, counterpart),
 	}
 }
+
+// instructions is this check's own statement of what it enforces, rendered by
+// `stickler instructions`.
+const instructions = `## ` + "`" + Rule + "`" + `
+
+Command packages and domain verbs must correspond, in BOTH directions and at
+every depth:
+
+- a command package beneath ` + "`internal/app/commands/<path>`" + ` (one declaring a
+  ` + "`Command()`" + ` or ` + "`<Verb>Command()`" + ` entry point) must have a domain verb at
+  ` + "`internal/domain/<path>`" + ` declaring the Config/Result/Run contract;
+- a domain verb beneath ` + "`internal/domain/<path>`" + ` must have a command package at
+  ` + "`internal/app/commands/<path>`" + `.
+
+So adding ` + "`tenant create`" + ` means adding BOTH
+` + "`internal/app/commands/tenant/create`" + ` and ` + "`internal/domain/tenant/create`" + `.
+Nesting does not exempt a verb; a nested verb is as much a verb as a top-level
+one.
+
+A parent that only mounts subcommands needs no domain verb of its own, and is
+recognized by a self-declaring command package beneath it. A package that
+declares neither shape — a flags helper under a command, a shared grouping under
+a domain — binds nothing in either direction.
+`
+
+// Explain states the rule this check enforces.
+func (Runner) Explain(context.Context) (suite.Instructions, error) { return instructions, nil }

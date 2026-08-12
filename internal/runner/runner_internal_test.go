@@ -6,10 +6,12 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gomatic/stickler/internal/config"
 	"github.com/gomatic/stickler/internal/constants"
@@ -125,3 +127,73 @@ func TestGolangciRunnerPassesConfigFlag(t *testing.T) {
 	want.NoError(err)
 	want.Equal([]Arg{"run", "--output.json.path=stdout", "--config=/tmp/effective.yaml", "--", "./..."}, gotArgs)
 }
+
+// TestExplainRunsTheDeclaredInstructionsInvocation pins that a tool's own
+// catalog is what stickler prints: the declared arguments are appended to the
+// tool's command and its stdout is returned verbatim. Anything else would mean
+// stickler keeping prose about a tool it does not own.
+func TestExplainRunsTheDeclaredInstructionsInvocation(t *testing.T) {
+	var got []Arg
+	command := func(_ context.Context, name Name, _ []EnvVar, args ...Arg) ([]byte, error) {
+		assert.Equal(t, Name("yze"), name)
+		got = args
+		return []byte("# yze rule catalog\n"), nil
+	}
+	spec := config.DefaultRunnerSpecs()["yze"]
+	runner, ok := newSpecRunner(command, spec, "yze", Context{})
+	require.True(t, ok)
+
+	text, err := runner.(specRunner).Explain(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, "# yze rule catalog\n", string(text))
+	assert.Equal(t, []Arg{"--emit-rules", "grit"}, got, "the declared invocation, not a guess")
+}
+
+// TestExplainRefusesWhenTheToolDeclaresNoInstructions pins the honest gap: a
+// spec that declares no catalog invocation cannot explain itself, and says so
+// rather than contributing an empty section that would read as "no rules".
+func TestExplainRefusesWhenTheToolDeclaresNoInstructions(t *testing.T) {
+	spec := config.RunnerSpec{Name: "quiet", Command: []string{"quiet"}, Format: config.ParserSticklerJSON}
+	runner, ok := newSpecRunner(fakeExplainCommand, spec, "quiet", Context{})
+	require.True(t, ok)
+
+	_, err := runner.(specRunner).Explain(context.Background())
+
+	assert.ErrorIs(t, err, constants.ErrNoInstructions)
+}
+
+// TestExplainSurfacesAToolFailure pins that a catalog invocation that fails is
+// reported, not rendered as an empty rule set.
+func TestExplainSurfacesAToolFailure(t *testing.T) {
+	spec := config.DefaultRunnerSpecs()["yze"]
+	failing := func(context.Context, Name, []EnvVar, ...Arg) ([]byte, error) {
+		return nil, errors.New("tool crashed")
+	}
+	runner, ok := newSpecRunner(failing, spec, "yze", Context{})
+	require.True(t, ok)
+
+	_, err := runner.(specRunner).Explain(context.Background())
+
+	assert.ErrorIs(t, err, constants.ErrRunnerFailed)
+}
+
+// TestExplainSurfacesAHermeticCacheFailure pins that the env seam's failure
+// reaches the caller here too, rather than running the tool without it.
+func TestExplainSurfacesAHermeticCacheFailure(t *testing.T) {
+	original := osMkdirTemp
+	t.Cleanup(func() { osMkdirTemp = original })
+	osMkdirTemp = func(string, string) (string, error) { return "", errors.New("no space") }
+
+	spec := config.DefaultRunnerSpecs()["golangci-lint"]
+	spec.Instructions = []string{"help", "linters"}
+	runner, ok := newSpecRunner(fakeExplainCommand, spec, "golangci-lint", Context{})
+	require.True(t, ok)
+
+	_, err := runner.(specRunner).Explain(context.Background())
+
+	assert.ErrorIs(t, err, constants.ErrRunnerFailed)
+}
+
+// fakeExplainCommand stands in for a tool that prints nothing.
+func fakeExplainCommand(context.Context, Name, []EnvVar, ...Arg) ([]byte, error) { return nil, nil }

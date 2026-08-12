@@ -171,3 +171,25 @@ func substituteArg(raw argTemplate, root suite.Root, configArgs []string) []Arg 
 	}
 	return []Arg{Arg(strings.ReplaceAll(string(raw), config.PlaceholderRoot, string(root)))}
 }
+
+// Explain runs the tool's declared instructions invocation and returns what it
+// printed. A spec that declares none cannot explain itself; that is reported
+// as a refusal rather than an empty section, so a tool silently contributing
+// nothing to the standards an agent reads is impossible to miss.
+func (r specRunner) Explain(ctx context.Context) (suite.Instructions, error) {
+	if len(r.spec.Instructions) == 0 {
+		return "", constants.ErrNoInstructions.With(nil, "runner", r.spec.Name)
+	}
+	env, cleanup, err := resolveEnv(r.spec.Env)
+	if err != nil {
+		return "", constants.ErrRunnerFailed.With(err, "runner", r.spec.Name)
+	}
+	defer cleanup()
+	name := Name(r.spec.Command[0])
+	args := append(toArgs(r.spec.Command[1:]), toArgs(r.spec.Instructions)...)
+	out, err := r.command(ctx, name, env, args...)
+	if err != nil {
+		return "", constants.ErrRunnerFailed.With(err, "runner", r.spec.Name)
+	}
+	return suite.Instructions(out), nil
+}

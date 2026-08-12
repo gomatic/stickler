@@ -76,6 +76,13 @@ type RunnerSpec struct {
 	Config  *Spec      `yaml:"config"`
 	Command []string   `yaml:"command"`
 	Args    []string   `yaml:"args"`
+	// Instructions is the argument template that makes this tool emit its own
+	// rule catalog. It is DATA for the same reason the tool itself is: what a
+	// tool's rules mean is the tool's to say, and prose about them living in
+	// stickler's source would be a second source of truth that drifts from the
+	// analyzer that actually decides. A spec that declares none simply cannot
+	// explain itself, and is reported as such rather than guessed at.
+	Instructions []string `yaml:"instructions"`
 	// Env entries are appended to the subprocess environment, shadowing
 	// same-keyed ambient values. An entry may carry the `{cache}` placeholder,
 	// which expands to a fresh per-invocation temporary directory (removed
@@ -98,6 +105,10 @@ func DefaultRunnerSpecs() map[string]RunnerSpec {
 			},
 			Format: ParserSticklerJSON,
 			Config: &Spec{Base: []string{yzeBaseYAML, yzeBaseYML}, Flag: yzeCfgFlag},
+			// yze already exports its whole catalog — one entry per rule with
+			// its id, description, docs link, and categories — so stickler
+			// asks for it rather than restating it.
+			Instructions: []string{"--emit-rules", "grit"},
 		},
 		ToolGolangci: {
 			Name:    ToolGolangci,

@@ -81,3 +81,35 @@ func diagnostics(programs []layout.Program) []goyze.Diagnostic {
 	}
 	return diags
 }
+
+// instructions is this check's own statement of what it enforces, rendered by
+// `stickler instructions`.
+const instructions = `## ` + "`" + Rule + "`" + `
+
+A ` + "`main`" + ` package that constructs a urfave/cli command must have the three-tier
+layout behind it. Every other layout rule is scoped INSIDE those trees, so a CLI
+with no command tier passes all of them vacuously — this is the check that sees
+that.
+
+Write a CLI as three tiers:
+
+- ` + "`internal/app/commands/<verb>/command.go`" + ` binds flags and NOTHING else. It
+  declares one exported entry point, leads with a const block (name, usage,
+  argUsage, description), and imports its domain package under the ` + "`domain`" + ` alias.
+- ` + "`internal/domain/<verb>`" + ` declares ` + "`Config`" + ` (the bound flags, no methods),
+  ` + "`Result`" + `, and exactly ` + "`Run(context.Context, *slog.Logger, Config, ...domain.Argument) (Result, error)`" + `.
+  This tier is THE reusable unit: it is what a server or a composing workflow
+  calls, so every input lives on the Config and no input is reachable only from
+  argv.
+- ` + "`internal/<capability>`" + ` holds the reusable logic and knows nothing about a
+  terminal.
+
+` + "`cmd/<name>/main.go`" + ` is wiring only: it mounts commands and sets the global
+flags. Logic in main is the violation this check names.
+
+A program that hands a declaration to a framework driver — a single-verb spec, a
+go/analysis singlechecker — owns no verbs and is NOT subject to this rule.
+`
+
+// Explain states the rule this check enforces.
+func (Runner) Explain(context.Context) (suite.Instructions, error) { return instructions, nil }

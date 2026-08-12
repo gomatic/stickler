@@ -11,6 +11,7 @@ import (
 	"github.com/gomatic/go-log"
 	"github.com/urfave/cli/v3"
 
+	"github.com/gomatic/stickler/internal/app/commands/instructions"
 	"github.com/gomatic/stickler/internal/app/commands/lint"
 )
 
@@ -26,7 +27,8 @@ layered over the global configuration — never in Go. The only per-tool code
 stickler carries is an output parser.
 
 Available Commands:
-  lint    - Run the suite over a root (the default; "stickler ./..." is "stickler lint ./...")
+  instructions - Print the rules every configured check enforces
+  lint         - Run the suite over a root (the default; "stickler ./..." is "stickler lint ./...")
 
 Findings that are not softened fail the build. A softened rule is still
 reported and still counted, against a committed per-rule baseline that may only
@@ -87,6 +89,7 @@ func createApp(getLogger app.GetLoggerFunc) *cli.Command {
 		// meaning `stickler lint [root]` now that the tool has a command tree.
 		DefaultCommand: lint.Name,
 		Commands: []*cli.Command{
+			instructions.Command(),
 			lint.Command(),
 		},
 		Before: func(ctx context.Context, c *cli.Command) (context.Context, error) {

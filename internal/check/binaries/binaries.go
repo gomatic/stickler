@@ -177,3 +177,29 @@ func diagnoseBinary(path trackedPath, format executableFormat) goyze.Diagnostic 
 		Message:  fmt.Sprintf(messageBinary, format),
 	}
 }
+
+// instructions is this check's own statement of what it enforces, rendered by
+// `stickler instructions`.
+const instructions = `## ` + "`" + Rule + "`" + `
+
+No compiled executable may be tracked in git. Detection reads a tracked file's
+MAGIC BYTES (ELF, Mach-O, PE, ar archives), not its name — a Go binary has no
+extension to key on.
+
+The cause is almost always a bare build: ` + "`go build`" + ` with no ` + "`-o`" + ` writes
+` + "`./<module>`" + ` at the repository root, and ` + "`go build ./cmd/<x>`" + ` writes
+` + "`./<x>`" + ` there too, where the canonical .gitignore matches nothing. So:
+
+- run a program with ` + "`go run ./cmd/<name>`" + `;
+- check that it compiles with ` + "`go build -o /dev/null ./...`" + ` or ` + "`go vet ./...`" + `;
+- when a real binary IS needed (signal handling, a release, profiling), build it
+  with an explicit ` + "`-o`" + ` pointing OUTSIDE the working tree or at an ignored
+  path.
+
+The fix for a finding is to delete the file and ignore the build output. A
+tracked ` + "`.wasm`" + ` file is exempt: it is a distributable web artifact, not a
+stray build output.
+`
+
+// Explain states the rule this check enforces.
+func (Runner) Explain(context.Context) (suite.Instructions, error) { return instructions, nil }
