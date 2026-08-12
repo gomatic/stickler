@@ -1,5 +1,6 @@
-// Package clitiers is the whole-repo check that a CLI has the three-tier
-// layout AT ALL.
+// Package clicommands is the whole-repo check that a CLI has the three-tier
+// layout AT ALL — that it has command packages, under internal/app/commands/,
+// which is what the rule is named for.
 //
 // It exists because every other layout rule is scoped INSIDE the trees it
 // judges: yze/cliapp, yze/clidomain, and yze/cliflags each return early unless
@@ -22,7 +23,7 @@
 //
 // A rule that fires on 62 repositories which are all correct is not a strict
 // rule, it is a broken one — it teaches everybody to ignore the gate.
-package clitiers
+package clicommands
 
 import (
 	"context"
@@ -36,7 +37,7 @@ import (
 
 // Name is the runner's registry name; Rule its rule id.
 const (
-	Name = "clitiers"
+	Name = "clicommands"
 	Rule = "stickler/" + Name
 )
 

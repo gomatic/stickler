@@ -1,4 +1,4 @@
-package clitiers
+package clicommands
 
 import (
 	"context"
@@ -134,6 +134,6 @@ func TestWalkErrorSurfaces(t *testing.T) {
 func TestNameAndRuleAreStable(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "clitiers", Runner{}.Name())
-	assert.Equal(t, "stickler/clitiers", Rule)
+	assert.Equal(t, "clicommands", Runner{}.Name())
+	assert.Equal(t, "stickler/clicommands", Rule)
 }

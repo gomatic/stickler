@@ -7,7 +7,7 @@ package layout
 //
 // It JUDGES nothing. What the collected tree means is the business of the
 // checks that read it: stickler/clilayout asks whether the two tiers
-// correspond, stickler/clitiers asks whether a command tier exists at all.
+// correspond, stickler/clicommands asks whether a command tier exists at all.
 // Both read one implementation of the walk, so they cannot come to disagree
 // about what a command package is.
 

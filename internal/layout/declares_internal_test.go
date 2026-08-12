@@ -24,7 +24,7 @@ func sourceFile(t *testing.T, name, body string) SourcePath {
 }
 
 // TestBuildsCLICommandDiscriminatesATreeFromADriver names the distinction the
-// whole clitiers check rests on, and the one a fleet sweep proved matters: a
+// whole clicommands check rests on, and the one a fleet sweep proved matters: a
 // main that CONSTRUCTS a command owns a tree; a main that merely names the type
 // — a single-verb spec handed to a framework driver — does not. Keying on the
 // import instead reported 26 correct repositories.

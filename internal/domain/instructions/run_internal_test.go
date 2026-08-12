@@ -193,11 +193,11 @@ func TestWriterDefaultsToStandardOutput(t *testing.T) {
 func TestAssembleReadsTheRealConfiguration(t *testing.T) {
 	original := readFile
 	t.Cleanup(func() { readFile = original })
-	readFile = func(string) ([]byte, error) { return []byte("runners: [clitiers]\n"), nil }
+	readFile = func(string) ([]byte, error) { return []byte("runners: [clicommands]\n"), nil }
 
 	built, err := assemble(".")
 
 	require.NoError(t, err)
 	require.Len(t, built, 1)
-	assert.Equal(t, "clitiers", built[0].Name())
+	assert.Equal(t, "clicommands", built[0].Name())
 }

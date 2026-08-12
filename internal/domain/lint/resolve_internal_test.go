@@ -26,8 +26,8 @@ func TestBuildAssemblesEveryDeclaredToolAndNativeCheck(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runners, 5)
 	assert.Equal(t, "binaries", runners[0].Name())
-	assert.Equal(t, "clilayout", runners[1].Name())
-	assert.Equal(t, "clitiers", runners[2].Name())
+	assert.Equal(t, "clicommands", runners[1].Name())
+	assert.Equal(t, "clilayout", runners[2].Name())
 	assert.Equal(t, "golangci-lint", runners[3].Name())
 	assert.Equal(t, "yze", runners[4].Name())
 }
