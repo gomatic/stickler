@@ -9,7 +9,9 @@ A rule can be non-gating for two unrelated reasons, and conflating them is what 
 - **A ROLLOUT ratchet** — a rule that gates BY RIGHT, softened while a backlog is worked down. It lives in `soft:`, its count is capped by `soft-baseline:`, an absent entry caps it at ZERO, and exceeding the cap fails the build. It returns to hard at zero.
 - **A PROBE** — a rule whose precision is bounded by judgment rather than syntax. It lives in `probe:` in the GLOBAL configuration only, it never gates at any count, and no baseline applies to it. Its findings are printed and counted so a reader still sees them; the remedy is to adjudicate the finding or fix the analyzer — never to record a number, and never to reword the prose the probe read.
 
-A repository may not declare a probe of its own: the load is refused with `ErrProbeNotGlobal`. Whether an analyzer is judgment-bound is a property of the analyzer, and a repo-declared probe would be an unbounded, uncounted escape from a rule that gates by right — strictly weaker than the baseline it would replace.
+A repository may not declare a probe of its own: the load is refused with `ErrProbeNotGlobal`, for the KEY in any spelling — a list, a directive, an empty mapping, a bare `probe:` — because refusing only the spellings that fold to something would leave the rest silently ignored. Whether an analyzer is judgment-bound is a property of the analyzer, and a repo-declared probe would be an unbounded, uncounted escape from a rule that gates by right — strictly weaker than the baseline it would replace.
+
+That rule is only as good as knowing which layer is which, so the global config path must be ABSOLUTE and an unresolvable one yields NO global layer rather than a guessed one. Joining an empty home gives the relative `.config/stickler/config.yaml`, which resolves against the working directory — inside the tree being linted — and a repository that committed that path would be handed the global scope over its own lint. A container with no `HOME` reaches that state on its own.
 
 ## The rule that shapes everything here
 

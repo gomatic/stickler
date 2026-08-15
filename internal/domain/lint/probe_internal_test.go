@@ -10,10 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	errs "github.com/gomatic/go-error"
 	goyze "github.com/gomatic/go-yze"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gomatic/stickler/internal/config"
 	"github.com/gomatic/stickler/internal/constants"
 	"github.com/gomatic/stickler/internal/suite"
 )
@@ -87,6 +89,46 @@ func TestRunRefusesARepositoryDeclaredProbe(t *testing.T) {
 	_, _, err := runPass(t, Config{})
 
 	assert.ErrorIs(t, err, constants.ErrProbeNotGlobal)
+}
+
+// TestRunWithNoHomeWillNotReadAProbeOutOfTheTreeItIsLinting is the attack the
+// scope rule exists to stop, driven end to end. A repository commits
+// .config/stickler/config.yaml — the path an unresolvable home would join to —
+// declaring a ROLLOUT rule a probe. If the pass reads it as the global layer,
+// that rule stops gating for this repository, permanently and uncounted, from a
+// file the repository itself ships. A container with no HOME needs no attacker
+// to reach that state.
+func TestRunWithNoHomeWillNotReadAProbeOutOfTheTreeItIsLinting(t *testing.T) {
+	originalHome, originalEnv := userHomeDir, getenv
+	t.Cleanup(func() { userHomeDir, getenv = originalHome, originalEnv })
+	userHomeDir = func() (string, error) { return "", errs.Const("no home") }
+	getenv = func(string) string { return "" }
+
+	original := buildRunners
+	t.Cleanup(func() { buildRunners = original })
+	buildRunners = func(config.Resolved, config.RepoRoot) ([]suite.Runner, error) {
+		return []suite.Runner{fakeRunner{diags: []goyze.Diagnostic{
+			{Path: "a.go", Rule: "yze/errtest", Message: "an error nobody asserts"},
+		}}}, nil
+	}
+
+	var asked []string
+	originalRead := readFile
+	t.Cleanup(func() { readFile = originalRead })
+	readFile = func(path string) ([]byte, error) {
+		asked = append(asked, path)
+		if strings.HasSuffix(path, ".stickler.yaml") {
+			return []byte("soft: [yze/errtest]\n"), nil
+		}
+		return []byte("probe: [yze/errtest]\n"), nil
+	}
+
+	_, result, err := runPass(t, Config{})
+
+	require.ErrorIs(t, err, constants.ErrLintFailed, "the rollout rule must still gate")
+	assert.Equal(t, []string{".stickler.yaml"}, asked, "no path inside the tree may be read as the global layer")
+	assert.Empty(t, result.Probes)
+	assert.Equal(t, []suite.Overage{{Rule: "yze/errtest", Count: 1, Baseline: 0}}, result.Overages)
 }
 
 // TestReportProbesNamesEachProbeAndItsCount pins that an ungated rule still

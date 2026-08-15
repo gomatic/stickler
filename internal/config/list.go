@@ -77,14 +77,6 @@ func unknownDirectiveKey(content []*yaml.Node) (string, bool) {
 	return "", false
 }
 
-// declared reports whether this layer wrote the setting at all, distinguishing a
-// setting a layer never mentions from one it writes as an empty sequence (which
-// REPLACES the accumulated value with nothing). A caller that refuses a setting
-// in a given layer has to refuse both spellings.
-func (l StringList) declared() bool {
-	return l.replace != nil || len(l.add) > 0 || len(l.remove) > 0
-}
-
 // applyTo folds this layer's directives onto the accumulated base value. It is
 // purely functional: base (and any layer's replace slice) is never mutated, so a
 // slice shared across layers cannot be corrupted by a later layer's edits.

@@ -63,18 +63,33 @@ func TestWriterDefaultsToStandardOutput(t *testing.T) {
 	assert.Equal(t, io.Writer(&buf), writer(&buf))
 }
 
-// TestConfigureSkipsAnAbsentHomeDirectory pins that a machine with no
-// resolvable home still lints: the global layer is simply absent.
+// TestConfigureSkipsAnAbsentHomeDirectory pins that a machine with no resolvable
+// home still lints, and that the global layer is genuinely ABSENT rather than
+// guessed at. The guess is the dangerous part: joining an empty home yields the
+// RELATIVE .config/stickler/config.yaml, which resolves against the working
+// directory, so a repository that committed that path would be handed the global
+// scope over its own lint — and could declare the one setting only the global
+// layer may declare. So this asserts on the paths configure actually ASKED FOR,
+// not on a re-computation of the layer list, which would be a tautology.
 func TestConfigureSkipsAnAbsentHomeDirectory(t *testing.T) {
-	originalHome, originalEnv := userHomeDir, getenv
-	t.Cleanup(func() { userHomeDir, getenv = originalHome, originalEnv })
+	originalHome, originalEnv, originalRead := userHomeDir, getenv, readFile
+	t.Cleanup(func() { userHomeDir, getenv, readFile = originalHome, originalEnv, originalRead })
 	userHomeDir = func() (string, error) { return "", errs.Const("no home") }
 	getenv = func(string) string { return "" }
-	swapReadFile(t, "format: json\n", nil)
+
+	var asked []string
+	readFile = func(path string) ([]byte, error) {
+		asked = append(asked, path)
+		return []byte("format: json\n"), nil
+	}
 
 	resolved, err := configure(".")
 
 	require.NoError(t, err)
 	assert.Equal(t, "json", resolved.Format)
-	assert.True(t, strings.HasSuffix(string(config.Layers(getenv, "", ".")[1].Path), ".stickler.yaml"))
+	assert.Equal(t, []string{".stickler.yaml"}, asked,
+		"with no home there is no global config to read, and nothing inside the tree stands in for one")
+	for _, path := range asked {
+		assert.True(t, strings.HasSuffix(path, ".stickler.yaml"), "%s is not a repository config", path)
+	}
 }

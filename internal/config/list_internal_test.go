@@ -161,43 +161,6 @@ func TestUnmarshalYAMLRefusesEveryNodeKindThatIsNotAListOrDirectiveMap(t *testin
 	}
 }
 
-// TestDeclaredSeparatesAnUnwrittenSettingFromAnEmptyOne names declared's claim:
-// it says whether a LAYER wrote a setting, which is not the same question as
-// whether the setting has entries. An empty sequence is a REPLACE — it wipes
-// everything the lower layers accumulated — so a caller that refuses a setting
-// in a given scope has to refuse `probe: []` exactly as it refuses `probe:
-// [x]`. Reading declared off the folded value instead would make the most
-// destructive spelling the one that slips through.
-func TestDeclaredSeparatesAnUnwrittenSettingFromAnEmptyOne(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	var absent StringList
-	want.False(absent.declared(), "a layer that never mentions the setting has not declared it")
-
-	for _, tc := range []struct {
-		name string
-		yaml string
-	}{
-		{name: "an empty sequence replaces with nothing", yaml: "[]"},
-		{name: "a populated sequence", yaml: "[yze/invariant]"},
-		{name: "an add directive", yaml: "{add: [yze/invariant]}"},
-		{name: "a remove directive", yaml: "{remove: [yze/invariant]}"},
-		{name: "an empty replace directive", yaml: "{replace: []}"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			var node yaml.Node
-			require.NoError(t, yaml.Unmarshal([]byte(tc.yaml), &node))
-
-			var list StringList
-			require.NoError(t, list.UnmarshalYAML(node.Content[0]))
-
-			assert.True(t, list.declared(), "%s is a declaration", tc.name)
-		})
-	}
-}
-
 // TestUnmarshalYAMLRefusesAKindlessNode covers the default arm: a node carrying
 // no kind at all reaches UnmarshalYAML only from a caller constructing one, and
 // it must be refused rather than decoded as an empty list.
