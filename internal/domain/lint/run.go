@@ -22,6 +22,10 @@ type Result struct {
 	Diagnostics []goyze.Diagnostic `json:"diagnostics"`
 	Errors      []string           `json:"errors,omitempty"`
 	Overages    []suite.Overage    `json:"overages,omitempty"`
+	// Probes counts the findings of each rule declared a permanent probe. They
+	// gate nothing, so the count is the whole of their signal: a second caller
+	// that only reads HasFailures would otherwise never learn they exist.
+	Probes      []suite.ProbeCount `json:"probes,omitempty"`
 	HasFailures bool               `json:"failed"`
 }
 
@@ -54,6 +58,7 @@ func Run(ctx context.Context, logger *slog.Logger, cfg Config, args ...domain.Ar
 		return Result{}, err
 	}
 	reportOverages(logger, result.Overages)
+	reportProbes(logger, result.Probes)
 	if result.HasFailures {
 		return result, constants.ErrLintFailed
 	}
@@ -70,12 +75,13 @@ func orchestrate(ctx context.Context, timeout Timeout, root suite.Root, runners 
 // resultOf renders one pass as the domain result, applying the soft-fail
 // ratchet the resolved configuration declares.
 func resultOf(pass suite.Result, resolved config.Resolved) Result {
-	soft, baseline := suite.Soft(resolved.Soft), suite.Baseline(resolved.SoftBaseline)
+	policy := policyOf(resolved)
 	return Result{
 		Diagnostics: pass.Diagnostics,
 		Errors:      messages(pass.Errors),
-		Overages:    pass.OverBaseline(soft, baseline),
-		HasFailures: pass.Failed(soft, baseline),
+		Overages:    pass.OverBaseline(policy),
+		Probes:      pass.ProbeCounts(policy),
+		HasFailures: pass.Failed(policy),
 	}
 }
 

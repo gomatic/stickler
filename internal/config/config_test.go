@@ -123,7 +123,10 @@ func TestLoadLayersSkipsMissingAndParsesPresent(t *testing.T) {
 		return []byte("format: github\n"), nil
 	}
 
-	layers, err := config.LoadLayers(read, "global", "repo")
+	layers, err := config.LoadLayers(read,
+		config.Layer{Path: "global", Scope: config.ScopeGlobal},
+		config.Layer{Path: "repo", Scope: config.ScopeRepo},
+	)
 
 	require.NoError(t, err)
 	require.Len(t, layers, 1)
@@ -133,23 +136,86 @@ func TestLoadLayersSkipsMissingAndParsesPresent(t *testing.T) {
 func TestLoadLayersReportsParseError(t *testing.T) {
 	read := func(string) ([]byte, error) { return []byte("runners: : :\n"), nil }
 
-	_, err := config.LoadLayers(read, "bad.yaml")
+	_, err := config.LoadLayers(read, config.Layer{Path: "bad.yaml", Scope: config.ScopeGlobal})
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, constants.ErrConfig))
 }
 
-func TestConfigPaths(t *testing.T) {
-	withXDG := config.Paths(func(string) string { return "/xdg" }, "/home/u", "/repo")
-	assert.Equal(t, config.Path("/xdg/stickler/config.yaml"), withXDG[0])
-	assert.Equal(t, config.Path("/repo/.stickler.yaml"), withXDG[1])
+func TestConfigLayers(t *testing.T) {
+	withXDG := config.Layers(func(string) string { return "/xdg" }, "/home/u", "/repo")
+	assert.Equal(t, config.Path("/xdg/stickler/config.yaml"), withXDG[0].Path)
+	assert.Equal(t, config.Path("/repo/.stickler.yaml"), withXDG[1].Path)
 
-	noXDG := config.Paths(func(string) string { return "" }, "/home/u", "/repo")
-	assert.Equal(t, config.Path("/home/u/.config/stickler/config.yaml"), noXDG[0])
+	// The scope travels WITH the path rather than being inferred from position:
+	// an absent global config is skipped, so "the first layer loaded" is not the
+	// global one, and a probe declaration must never be honoured by accident.
+	assert.Equal(t, config.ScopeGlobal, withXDG[0].Scope)
+	assert.Equal(t, config.ScopeRepo, withXDG[1].Scope)
+
+	noXDG := config.Layers(func(string) string { return "" }, "/home/u", "/repo")
+	assert.Equal(t, config.Path("/home/u/.config/stickler/config.yaml"), noXDG[0].Path)
 
 	// XDG spec: a relative $XDG_CONFIG_HOME is invalid and must be ignored.
-	relXDG := config.Paths(func(string) string { return "relative/dir" }, "/home/u", "/repo")
-	assert.Equal(t, config.Path("/home/u/.config/stickler/config.yaml"), relXDG[0])
+	relXDG := config.Layers(func(string) string { return "relative/dir" }, "/home/u", "/repo")
+	assert.Equal(t, config.Path("/home/u/.config/stickler/config.yaml"), relXDG[0].Path)
+}
+
+func TestGlobalLayerDeclaresTheProbeRules(t *testing.T) {
+	read := func(path string) ([]byte, error) {
+		if path == "global" {
+			return []byte("soft: [yze/invariant, yze/errtest]\nprobe: [yze/invariant]\n"), nil
+		}
+		return []byte("soft-baseline:\n  yze/errtest: 3\n"), nil
+	}
+
+	layers, err := config.LoadLayers(read,
+		config.Layer{Path: "global", Scope: config.ScopeGlobal},
+		config.Layer{Path: "repo", Scope: config.ScopeRepo},
+	)
+	require.NoError(t, err)
+
+	resolved := config.Resolve(layers...)
+	assert.Equal(t, []string{"yze/invariant"}, resolved.Probe)
+	assert.Equal(t, []string{"yze/invariant", "yze/errtest"}, resolved.Soft)
+	assert.Equal(t, map[string]int{"yze/errtest": 3}, resolved.SoftBaseline)
+}
+
+// TestRepositoryMayNotDeclareAProbe pins the one thing this mechanism must not
+// become: a way for a repository to stop a rule gating forever. Raising a
+// baseline is at least a NUMBER a reviewer can read and a ratchet that may only
+// fall; a repo-declared probe would be unbounded and uncounted, which is the
+// disablement the ratchet exists to prevent. Which analyzers are judgment-bound
+// is a property of the analyzer, so only the global layer says so.
+func TestRepositoryMayNotDeclareAProbe(t *testing.T) {
+	read := func(path string) ([]byte, error) {
+		if path == "global" {
+			return []byte("probe: [yze/invariant]\n"), nil
+		}
+		return []byte("probe:\n  add: [yze/ptrrecv]\n"), nil
+	}
+
+	_, err := config.LoadLayers(read,
+		config.Layer{Path: "global", Scope: config.ScopeGlobal},
+		config.Layer{Path: "/repo/.stickler.yaml", Scope: config.ScopeRepo},
+	)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, constants.ErrProbeNotGlobal))
+	assert.Contains(t, err.Error(), "/repo/.stickler.yaml", "the refusal names the file to edit")
+}
+
+// TestRepositoryMayNotEmptyTheProbeList covers the other direction: a repo that
+// writes an empty `probe:` sequence is declaring one (a replace), and replacing
+// the global list with nothing would re-gate every probe fleet-wide from one
+// repository's file.
+func TestRepositoryMayNotEmptyTheProbeList(t *testing.T) {
+	read := func(string) ([]byte, error) { return []byte("probe: []\n"), nil }
+
+	_, err := config.LoadLayers(read, config.Layer{Path: "repo", Scope: config.ScopeRepo})
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, constants.ErrProbeNotGlobal))
 }
 
 // TestResolveDeliversAnalyzerSettingsToYze pins the whole point of the

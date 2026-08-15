@@ -76,5 +76,5 @@ func TestConfigureSkipsAnAbsentHomeDirectory(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "json", resolved.Format)
-	assert.True(t, strings.HasSuffix(string(config.Paths(getenv, "", ".")[1]), ".stickler.yaml"))
+	assert.True(t, strings.HasSuffix(string(config.Layers(getenv, "", ".")[1].Path), ".stickler.yaml"))
 }

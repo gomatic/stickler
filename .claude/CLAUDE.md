@@ -2,6 +2,15 @@
 
 The gomatic **lint runner**: it executes the configured checks to completion, normalizes their findings into one diagnostic schema, and reports pass or fail through the process exit code. It is a CLI, not a library — nothing outside this module imports it.
 
+## Soft is two different things, and they are declared apart
+
+A rule can be non-gating for two unrelated reasons, and conflating them is what made a rule documented as advisory block every push in the fleet.
+
+- **A ROLLOUT ratchet** — a rule that gates BY RIGHT, softened while a backlog is worked down. It lives in `soft:`, its count is capped by `soft-baseline:`, an absent entry caps it at ZERO, and exceeding the cap fails the build. It returns to hard at zero.
+- **A PROBE** — a rule whose precision is bounded by judgment rather than syntax. It lives in `probe:` in the GLOBAL configuration only, it never gates at any count, and no baseline applies to it. Its findings are printed and counted so a reader still sees them; the remedy is to adjudicate the finding or fix the analyzer — never to record a number, and never to reword the prose the probe read.
+
+A repository may not declare a probe of its own: the load is refused with `ErrProbeNotGlobal`. Whether an analyzer is judgment-bound is a property of the analyzer, and a repo-declared probe would be an unbounded, uncounted escape from a rule that gates by right — strictly weaker than the baseline it would replace.
+
 ## The rule that shapes everything here
 
 **A tool is DATA, not code** (standing rule R1). Which checkers run, how each is invoked, how its configuration is merged, and how its output is parsed are declared in `.stickler.yaml` layered over the global configuration — never in Go. The only per-tool Go code stickler carries is an output parser. Adding a tool is configuration; if a change requires a new Go branch per tool, it is the wrong change.

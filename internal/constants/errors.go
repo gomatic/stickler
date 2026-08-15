@@ -14,6 +14,7 @@ const (
 	ErrExec           errs.Const = "command execution failed"
 	ErrLintFailed     errs.Const = "lint failures found"
 	ErrNoInstructions errs.Const = "runner cannot explain itself"
+	ErrProbeNotGlobal errs.Const = "only the global config may declare a probe"
 	ErrRunner         errs.Const = "lint runner failed"
 	ErrRunnerFailed   errs.Const = "runner failed"
 	ErrUnknownOutput  errs.Const = "unknown output format"

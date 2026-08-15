@@ -19,36 +19,45 @@ type Result struct {
 }
 
 // Failed reports whether the pass should fail the build: any runner error, any
-// HARD (not soft-listed) diagnostic, or any soft rule that has grown past its
-// committed baseline. Soft diagnostics within their baseline are still reported
-// by the formatter; they just do not gate.
-func (r Result) Failed(soft Soft, baseline Baseline) bool {
-	if len(r.Errors) > 0 || len(r.OverBaseline(soft, baseline)) > 0 {
+// HARD diagnostic, or any soft rule that has grown past its committed baseline.
+// Soft diagnostics within their baseline, and probe diagnostics at any count,
+// are still reported by the formatter; they just do not gate.
+func (r Result) Failed(policy Policy) bool {
+	if len(r.Errors) > 0 || len(r.OverBaseline(policy)) > 0 {
 		return true
 	}
-	return slices.ContainsFunc(r.Diagnostics, func(diag goyze.Diagnostic) bool {
-		return !soft.covers(diag)
-	})
+	return slices.ContainsFunc(r.Diagnostics, policy.gates)
 }
 
 // OverBaseline returns every soft rule whose finding count exceeds its
 // committed baseline, in stable rule order so output is deterministic.
-func (r Result) OverBaseline(soft Soft, baseline Baseline) []Overage {
-	counts := r.softCounts(soft)
+func (r Result) OverBaseline(policy Policy) []Overage {
+	counts := r.countBy(policy.ratchets)
 	over := make([]Overage, 0, len(counts))
 	for _, rule := range slices.Sorted(maps.Keys(counts)) {
-		if counts[rule] > baseline[rule] {
-			over = append(over, Overage{Rule: rule, Count: counts[rule], Baseline: baseline[rule]})
+		if counts[rule] > policy.Baseline[rule] {
+			over = append(over, Overage{Rule: rule, Count: counts[rule], Baseline: policy.Baseline[rule]})
 		}
 	}
 	return over
 }
 
-// softCounts tallies the soft-listed diagnostics by rule.
-func (r Result) softCounts(soft Soft) map[string]int {
+// ProbeCounts returns each probe rule's finding count, in stable rule order. A
+// probe never gates, so this count is what carries it to a reader.
+func (r Result) ProbeCounts(policy Policy) []ProbeCount {
+	counts := r.countBy(policy.Probe.covers)
+	probes := make([]ProbeCount, 0, len(counts))
+	for _, rule := range slices.Sorted(maps.Keys(counts)) {
+		probes = append(probes, ProbeCount{Rule: rule, Count: counts[rule]})
+	}
+	return probes
+}
+
+// countBy tallies by rule the diagnostics the predicate selects.
+func (r Result) countBy(include func(goyze.Diagnostic) bool) map[string]int {
 	counts := map[string]int{}
 	for _, diag := range r.Diagnostics {
-		if soft.covers(diag) {
+		if include(diag) {
 			counts[diag.Rule]++
 		}
 	}

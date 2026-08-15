@@ -32,7 +32,7 @@ the gate.
 
 ## What fails a build
 
-- Any finding from a rule that is not softened.
+- Any finding from a rule that is neither softened nor a probe.
 - Any soft rule whose count has grown past its committed baseline.
 - Any tool that failed to run at all — a crashed checker is never a clean pass.
 
@@ -41,6 +41,15 @@ in ` + "`.stickler.yaml`" + ` that may only fall. A rule with no baseline entry 
 capped at zero. Softening is a rollout ratchet, not an exemption: raising a
 baseline is a deliberate, reviewable decision, and the fix for a finding is the
 finding's cause.
+
+A PROBE is different in kind, and the difference is declared in the global
+configuration rather than inferred from a count. A probe's precision is bounded
+by judgment, not by syntax: it reports something for a person to adjudicate, so
+it never gates, at any count, in any repository, and no baseline applies to it.
+Its findings are still printed and still counted in the report — the remedy is
+to adjudicate the finding or to fix the analyzer, never to record a number and
+never to reword the prose the probe read. A repository cannot declare a probe of
+its own; which rules are judgment-bound is a property of the analyzer.
 
 ## Adding a check
 

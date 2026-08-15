@@ -31,6 +31,13 @@ type Config struct {
 	Format       string         `yaml:"format"`
 	Runners      StringList     `yaml:"runners"`
 	Soft         StringList     `yaml:"soft"`
+	// Probe names the rules that never gate: analyzers whose precision is bounded
+	// by judgment, which report for a human to adjudicate. It is declared ONLY by
+	// the global layer — see [LoadLayers] — because whether an analyzer is
+	// judgment-bound is a property of the analyzer, not of a repository, and a
+	// repo-declared probe would be an unbounded uncounted escape from a rule that
+	// gates by right.
+	Probe StringList `yaml:"probe"`
 }
 
 // Resolved is the concrete configuration after all layers are folded. Config maps
@@ -45,6 +52,7 @@ type Resolved struct {
 	Format       string
 	Runners      []string
 	Soft         []string
+	Probe        []string
 }
 
 // Resolve folds the layers in order (global first, repo last), applying each
@@ -59,6 +67,7 @@ func Resolve(layers ...Config) Resolved {
 	for _, layer := range layers {
 		resolved.Runners = layer.Runners.applyTo(resolved.Runners)
 		resolved.Soft = layer.Soft.applyTo(resolved.Soft)
+		resolved.Probe = layer.Probe.applyTo(resolved.Probe)
 		maps.Copy(resolved.SoftBaseline, layer.SoftBaseline)
 		if layer.Format != "" {
 			resolved.Format = layer.Format
@@ -147,23 +156,60 @@ func mergeAnalyzers(acc map[string]map[string][]string, layer map[string]map[str
 // Path is the path of one stickler config layer (global, then repo).
 type Path string
 
+// Scope is which configuration layer a path is: the GLOBAL layer every
+// repository inherits, or one REPOSITORY's own .stickler.yaml.
+type Scope string
+
+// The configuration scopes.
+const (
+	ScopeGlobal Scope = "global"
+	ScopeRepo   Scope = "repo"
+)
+
+// Layer is one configuration source: where it is read from and what scope it
+// carries. The scope travels WITH the path rather than being inferred from
+// position, because an absent global config is skipped — so "the first layer
+// loaded" is not reliably the global one, and a setting only the global layer
+// may declare must never be honoured by accident.
+type Layer struct {
+	Path  Path
+	Scope Scope
+}
+
 // LoadLayers reads and parses each existing config path into a layer. A path the
 // reader cannot open is treated as an absent layer and skipped; a path that
 // parses badly is an error.
-func LoadLayers(read FileReader, paths ...Path) ([]Config, error) {
+//
+// A `probe:` declaration outside the global layer is refused rather than
+// ignored: a probe never gates at any count, so a repository able to declare one
+// could permanently and uncountably disable a rule that gates by right — which
+// is strictly weaker than the baseline ratchet it would replace.
+func LoadLayers(read FileReader, sources ...Layer) ([]Config, error) {
 	var layers []Config
-	for _, path := range paths {
-		data, err := read(string(path))
+	for _, source := range sources {
+		data, err := read(string(source.Path))
 		if err != nil {
 			continue
 		}
-		var layer Config
-		if err := yaml.Unmarshal(data, &layer); err != nil {
-			return nil, constants.ErrConfig.With(err, "path", path)
+		layer, err := parseLayer(data, source)
+		if err != nil {
+			return nil, err
 		}
 		layers = append(layers, layer)
 	}
 	return layers, nil
+}
+
+// parseLayer decodes one layer's document and enforces what its scope permits.
+func parseLayer(data []byte, source Layer) (Config, error) {
+	var layer Config
+	if err := yaml.Unmarshal(data, &layer); err != nil {
+		return Config{}, constants.ErrConfig.With(err, "path", source.Path)
+	}
+	if source.Scope != ScopeGlobal && layer.Probe.declared() {
+		return Config{}, constants.ErrProbeNotGlobal.With(nil, "path", source.Path)
+	}
+	return layer, nil
 }
 
 // HomeDir is the current user's home directory, the base for the default global
@@ -178,10 +224,13 @@ type RepoRoot string
 // is testable without mutating the process environment.
 type Getenv func(key string) string
 
-// Paths returns the ordered config layer paths: the global config, then the
-// repository's .stickler.yaml.
-func Paths(getenv Getenv, home HomeDir, repoRoot RepoRoot) []Path {
-	return []Path{globalConfigPath(getenv, home), Path(filepath.Join(string(repoRoot), ".stickler.yaml"))}
+// Layers returns the ordered config layers: the global config, then the
+// repository's .stickler.yaml, each carrying its own scope.
+func Layers(getenv Getenv, home HomeDir, repoRoot RepoRoot) []Layer {
+	return []Layer{
+		{Path: globalConfigPath(getenv, home), Scope: ScopeGlobal},
+		{Path: Path(filepath.Join(string(repoRoot), ".stickler.yaml")), Scope: ScopeRepo},
+	}
 }
 
 // globalConfigPath returns the XDG global config path. Per the XDG Base Directory

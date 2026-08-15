@@ -30,9 +30,12 @@ Available Commands:
   instructions - Print the rules every configured check enforces
   lint         - Run the suite over a root (the default; "stickler ./..." is "stickler lint ./...")
 
-Findings that are not softened fail the build. A softened rule is still
-reported and still counted, against a committed per-rule baseline that may only
-fall — so a soft rule is non-blocking, never invisible.`
+Findings that are neither softened nor probed fail the build. A softened rule is
+still reported and still counted, against a committed per-rule baseline that may
+only fall — so a soft rule is non-blocking, never invisible. A PROBE is a rule
+the global configuration declares judgment-bound: it reports at any count and
+never gates, because the remedy is to adjudicate the finding rather than to
+record a number.`
 	envName   = "STICKLER"
 	envPrefix = envName + "_"
 	name      = `stickler`

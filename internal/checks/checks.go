@@ -47,7 +47,7 @@ func Resolve(
 	home config.HomeDir,
 	repoRoot config.RepoRoot,
 ) (config.Resolved, error) {
-	layers, err := config.LoadLayers(read, config.Paths(getenv, home, repoRoot)...)
+	layers, err := config.LoadLayers(read, config.Layers(getenv, home, repoRoot)...)
 	if err != nil {
 		return config.Resolved{}, err
 	}

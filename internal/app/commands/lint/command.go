@@ -23,8 +23,9 @@ question is a whole-repo fact no single-package analyzer can see — run
 alongside them.
 
 The report goes to stdout so machine formats pipe cleanly. A finding that is
-not softened, a soft rule grown past its committed baseline, or any tool
-failure exits non-zero.
+neither softened nor from a declared probe, a soft rule grown past its committed
+baseline, or any tool failure exits non-zero. A probe reports at any count and
+never gates.
 
 Examples:
   stickler

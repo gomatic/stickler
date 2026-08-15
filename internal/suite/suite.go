@@ -69,3 +69,62 @@ type Overage struct {
 	Count    int    `json:"count"`
 	Baseline int    `json:"baseline"`
 }
+
+// Probe is the set of RULE identifiers that never gate a build.
+//
+// A probe is an analyzer whose precision is bounded by judgment rather than by
+// syntax: it reports a finding a human or an agent adjudicates, and it is soft
+// EVERYWHERE, permanently and by design. That is what separates it from the
+// rollout softening the [Baseline] ratchets — a rollout rule gates by right and
+// is only temporarily quiet, so its count is a debt that may only fall, while a
+// probe's count is not a debt and no number "fixes" it.
+//
+// The two have to be DECLARED apart because they cannot be told apart from a
+// count: an absent baseline reads as zero, so before this existed every probe
+// gated on its first finding in every repository. The only remedy the tooling
+// counted was raising a baseline, which is itself a disablement — so the
+// cheapest way to a green build was to reword the prose the probe had read.
+//
+// A probe matches a diagnostic's RULE and never its TOOL. Matching by tool
+// would let one configuration line stop an entire suite from gating, which is
+// the silent disablement the ratchet exists to prevent.
+type Probe []string
+
+// covers reports whether a diagnostic comes from a probe rule.
+func (p Probe) covers(diag goyze.Diagnostic) bool {
+	return slices.Contains(p, diag.Rule)
+}
+
+// ProbeCount is one probe rule's finding count in a pass. A probe does not gate,
+// so counting it is the only thing that keeps it visible: a probe nobody counts
+// manufactures the appearance of coverage.
+type ProbeCount struct {
+	Rule  string `json:"rule"`
+	Count int    `json:"count"`
+}
+
+// Policy is the whole gating decision for one pass: which findings are soft,
+// which rules are permanent probes, and the committed ceiling on the rest. The
+// three are one value because no one of them decides anything alone — whether a
+// finding gates is a question about all three at once.
+//
+// Fields are ordered for struct-field alignment (the map first, then the
+// slices); the decision they describe reads Soft, Probe, Baseline.
+type Policy struct {
+	Baseline Baseline
+	Soft     Soft
+	Probe    Probe
+}
+
+// gates reports whether one diagnostic fails the build on its own account.
+func (p Policy) gates(diag goyze.Diagnostic) bool {
+	return !p.Probe.covers(diag) && !p.Soft.covers(diag)
+}
+
+// ratchets reports whether a diagnostic is counted against a committed baseline.
+// Soft findings are — that is the rollout ratchet. Probe findings are not: a
+// probe has no debt to work down, so there is no ceiling to exceed, and a
+// baseline recorded beside a probe rule is inert rather than a ceiling.
+func (p Policy) ratchets(diag goyze.Diagnostic) bool {
+	return !p.Probe.covers(diag) && p.Soft.covers(diag)
+}
