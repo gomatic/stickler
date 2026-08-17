@@ -22,9 +22,11 @@ import (
 
 // Tree is every self-declaring package of each tier, by pair key.
 type Tree struct {
-	commands map[Key]Decl
-	domains  map[Key]Decl
-	programs map[string]Program
+	commands  map[Key]Decl
+	domains   map[Key]Decl
+	programs  map[string]Program
+	mains     map[string]struct{}
+	published map[string]Published
 }
 
 // Program is one main package that BUILDS a urfave command — a command tree,
@@ -68,7 +70,13 @@ func (t Tree) Domains() map[Key]Decl { return t.domains }
 // Collect walks the module once, parsing every non-test Go file beneath a
 // tier marker and recording the packages that declare themselves.
 func Collect(dir suite.Dir) (Tree, error) {
-	tree := Tree{commands: map[Key]Decl{}, domains: map[Key]Decl{}, programs: map[string]Program{}}
+	tree := Tree{
+		commands:  map[Key]Decl{},
+		domains:   map[Key]Decl{},
+		programs:  map[string]Program{},
+		mains:     map[string]struct{}{},
+		published: map[string]Published{},
+	}
 	err := filepath.WalkDir(string(dir), func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -80,6 +88,7 @@ func Collect(dir suite.Dir) (Tree, error) {
 			slashed := SourcePath(filepath.ToSlash(path))
 			tree.record(slashed)
 			tree.recordProgram(slashed)
+			tree.recordVisibility(slashed, dir)
 		}
 		return nil
 	})

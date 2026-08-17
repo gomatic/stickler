@@ -23,6 +23,15 @@
 //
 // A rule that fires on 62 repositories which are all correct is not a strict
 // rule, it is a broken one — it teaches everybody to ignore the gate.
+//
+// That exemption is right, and it is also exactly how the SECOND rule here came
+// to be needed. Exempting a singlechecker main from the TIER rule says only that
+// a program with no verbs has no verb tree to split. It says nothing about what
+// the repository publishes — and all 36 of those analyzer repositories published
+// their entire implementation from an importable root package while shipping a
+// binary nothing installed. So the publication rule below keys on cmd/ EXISTING
+// rather than on any framework, because "what may this repository publish" is
+// not a question about which driver a main hands its declaration to.
 package clicommands
 
 import (
@@ -41,9 +50,15 @@ const (
 	Rule = "stickler/" + Name
 )
 
-// message is the single diagnostic this check emits.
-const message = "urfave/cli program %s has no command tier: a CLI's flags, orchestration, " +
-	"and logic belong in internal/app/commands/<verb>, internal/domain/<verb>, and internal/<capability>"
+// tiersMessage and publishedMessage are the two diagnostics this check emits.
+const (
+	tiersMessage = "urfave/cli program %s has no command tier: a CLI's flags, orchestration, " +
+		"and logic belong in internal/app/commands/<verb>, internal/domain/<verb>, and internal/<capability>"
+
+	publishedMessage = "%s is importable, but this repository builds a program under cmd/: " +
+		"a command repository publishes NOTHING — move it under internal/, leaving cmd/<name> as the only " +
+		"package outside it"
+)
 
 // Runner is the native check that a urfave/cli program has a command tier.
 type Runner struct{}
@@ -60,10 +75,47 @@ func (Runner) Run(_ context.Context, root suite.Root) ([]goyze.Diagnostic, error
 	if err != nil {
 		return nil, err
 	}
+	return append(tierDiagnostics(tree), publicationDiagnostics(tree)...), nil
+}
+
+// tierDiagnostics reports every urfave/cli program with no command tier behind
+// it. A module with a command tier anywhere satisfies the rule for all of them.
+func tierDiagnostics(tree layout.Tree) []goyze.Diagnostic {
 	if len(tree.Commands()) > 0 {
-		return nil, nil
+		return nil
 	}
-	return diagnostics(tree.Programs()), nil
+
+	return diagnostics(tree.Programs())
+}
+
+// publicationDiagnostics reports every importable package of a repository that
+// builds a program.
+//
+// Both halves are required, and neither is a finding alone. A repository that
+// publishes packages and builds nothing is a library, which is the normal case
+// and says nothing about layout. A repository that builds a program and
+// publishes nothing is already correct. It is the CONJUNCTION that leaves a
+// repository classified as both, where every marker-based rule answers
+// according to whichever half it inspected.
+func publicationDiagnostics(tree layout.Tree) []goyze.Diagnostic {
+	if !tree.BuildsProgram() {
+		return nil
+	}
+	published := tree.PublishedPackages()
+	diags := make([]goyze.Diagnostic, 0, len(published))
+	for _, pkg := range published {
+		diags = append(diags, goyze.Diagnostic{
+			Tool:     Name,
+			Rule:     Rule,
+			Path:     string(pkg.Path()),
+			Line:     1,
+			Col:      1,
+			Severity: goyze.SeverityError,
+			Message:  strings.Replace(publishedMessage, "%s", pkg.Describe(), 1),
+		})
+	}
+
+	return diags
 }
 
 // diagnostics reports one finding per urfave/cli program found.
@@ -77,7 +129,7 @@ func diagnostics(programs []layout.Program) []goyze.Diagnostic {
 			Line:     1,
 			Col:      1,
 			Severity: goyze.SeverityError,
-			Message:  strings.Replace(message, "%s", program.Dir(), 1),
+			Message:  strings.Replace(tiersMessage, "%s", program.Dir(), 1),
 		})
 	}
 	return diags
@@ -109,7 +161,23 @@ Write a CLI as three tiers:
 flags. Logic in main is the violation this check names.
 
 A program that hands a declaration to a framework driver — a single-verb spec, a
-go/analysis singlechecker — owns no verbs and is NOT subject to this rule.
+go/analysis singlechecker — owns no verbs and is NOT subject to the tier rule
+above.
+
+It IS subject to the second rule: a repository that builds any program under
+` + "`cmd/`" + ` must publish nothing. Every package it implements lives under
+` + "`internal/`" + `, leaving ` + "`cmd/<name>`" + ` as the only package outside it. A
+repository that ships a binary AND an importable package is a CLI and a library
+at once, so the markers describe neither and every layout rule keyed on the
+answer decides at random.
+
+A file holding only a package clause is not published code and is exempt; a file
+that declares anything is.
+
+If a repository is genuinely a library, it has no ` + "`cmd/`" + ` — delete the
+program rather than the rule. If it is genuinely a command, moving its code
+under ` + "`internal/`" + ` is what makes that true, and anything that breaks was
+importing a command.
 `
 
 // Explain states the rule this check enforces.

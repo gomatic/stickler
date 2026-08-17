@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -167,4 +168,32 @@ func TestHeaderLinesStopsAtTheFirstNonCommentLine(t *testing.T) {
 	want.Equal([]string{"// only comments"}, headerLines([]byte("// only comments\n")), "EOF ends the header too")
 	want.Empty(headerLines([]byte("/* block */\n//go:build ignore\npackage p\n")),
 		"a block comment ends the header scan — go:build must be a line comment before it")
+}
+
+// TestRelativeToFallsBackLoudlyForAPathOutsideTheRoot pins the direction of the
+// fallback rather than merely reaching it.
+//
+// The branch cannot be reached through Collect, whose paths all come from a walk
+// rooted at the same directory. It still has a direction, and the direction is
+// what matters: a path that cannot be placed relative to the root keeps its own
+// spelling, so it fails the internal/ prefix test and is classified as
+// published. That makes an unplaceable file a finding somebody reads, instead of
+// a quiet pass on the one file the rule could not judge.
+func TestRelativeToFallsBackLoudlyForAPathOutsideTheRoot(t *testing.T) {
+	t.Parallel()
+
+	const outside SourcePath = "/absolute/elsewhere/pkg/thing.go"
+
+	got := relativeTo(outside, "relative/root")
+
+	assert.Equal(t, string(outside), got, "an unplaceable path keeps its own spelling")
+	assert.False(t, strings.HasPrefix(got, string(internalMarker)),
+		"so it is not mistaken for internal code and silently passed")
+}
+
+// TestRelativeToStripsTheRoot is the ordinary case the fallback exists beside.
+func TestRelativeToStripsTheRoot(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "internal/suite/x.go", relativeTo("root/internal/suite/x.go", "root"))
 }
