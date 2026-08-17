@@ -1,4 +1,4 @@
-# Managed by nicerobot/tools.repository (distribute-build)
+# Managed by distribute-build; edits are replaced
 name: docs
 on:
   push:
@@ -38,9 +38,4 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          # A submodule is part of the checkout, not an optional extra: a repo
-          # that depends on one (www.adm.one carries pike and watchword) cannot
-          # install or build without it, and the failure is an unresolvable
-          # dependency rather than anything the gate can explain.
-          submodules: recursive
       - uses: nicerobot/tools.build/ci/docs@v2
