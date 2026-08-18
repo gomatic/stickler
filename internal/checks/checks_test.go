@@ -23,8 +23,8 @@ func TestNativeIsTheOneListOfChecksSticklerOwns(t *testing.T) {
 
 	native := checks.Native()
 
-	require.Len(t, native, 3)
-	for _, name := range []string{"binaries", "clicommands", "clilayout"} {
+	require.Len(t, native, 4)
+	for _, name := range []string{"binaries", "clicommands", "clilayout", "librarymarker"} {
 		runner, ok := native[name]
 		require.True(t, ok, name)
 		assert.Equal(t, name, runner.Name(), "a check's registry key is its own name")
@@ -56,8 +56,8 @@ func TestBuildSelectsEveryDeclaredToolAndNativeCheck(t *testing.T) {
 	built, err := checks.Build(stubCommand, config.Resolved{}, ".")
 
 	require.NoError(t, err)
-	require.Len(t, built, 5)
-	for i, name := range []string{"binaries", "clicommands", "clilayout", "golangci-lint", "yze"} {
+	require.Len(t, built, 6)
+	for i, name := range []string{"binaries", "clicommands", "clilayout", "golangci-lint", "librarymarker", "yze"} {
 		assert.Equal(t, name, built[i].Name())
 	}
 }

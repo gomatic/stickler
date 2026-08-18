@@ -13,6 +13,7 @@ import (
 	"github.com/gomatic/stickler/internal/check/binaries"
 	"github.com/gomatic/stickler/internal/check/clicommands"
 	"github.com/gomatic/stickler/internal/check/clilayout"
+	"github.com/gomatic/stickler/internal/check/librarymarker"
 	"github.com/gomatic/stickler/internal/config"
 	"github.com/gomatic/stickler/internal/runner"
 	"github.com/gomatic/stickler/internal/suite"
@@ -22,9 +23,10 @@ import (
 // a whole-repo fact no single-package analyzer pass can see.
 func Native() map[string]suite.Runner {
 	return map[string]suite.Runner{
-		binaries.Name:    binaries.Runner{},
-		clilayout.Name:   clilayout.Runner{},
-		clicommands.Name: clicommands.Runner{},
+		binaries.Name:      binaries.Runner{},
+		clilayout.Name:     clilayout.Runner{},
+		clicommands.Name:   clicommands.Runner{},
+		librarymarker.Name: librarymarker.Runner{},
 	}
 }
 

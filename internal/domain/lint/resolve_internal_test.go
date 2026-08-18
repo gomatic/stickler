@@ -18,18 +18,19 @@ import (
 
 // TestBuildAssemblesEveryDeclaredToolAndNativeCheck pins the composition root:
 // the native checks are injected HERE, so a pass over the defaults resolves all
-// four in one deterministic order. Were the injection dropped, the two native
+// six in one deterministic order. Were the injection dropped, the four native
 // checks would silently stop running and every repository would still go green.
 func TestBuildAssemblesEveryDeclaredToolAndNativeCheck(t *testing.T) {
 	runners, err := build(config.Resolved{}, ".")
 
 	require.NoError(t, err)
-	require.Len(t, runners, 5)
+	require.Len(t, runners, 6)
 	assert.Equal(t, "binaries", runners[0].Name())
 	assert.Equal(t, "clicommands", runners[1].Name())
 	assert.Equal(t, "clilayout", runners[2].Name())
 	assert.Equal(t, "golangci-lint", runners[3].Name())
-	assert.Equal(t, "yze", runners[4].Name())
+	assert.Equal(t, "librarymarker", runners[4].Name())
+	assert.Equal(t, "yze", runners[5].Name())
 }
 
 func TestConfigRootPrefersTheExplicitFlag(t *testing.T) {
